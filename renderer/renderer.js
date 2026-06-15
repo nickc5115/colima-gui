@@ -663,12 +663,61 @@ async function pruneNetworks() {
 // --------------------------------------------------------------------------
 // Logs drawer
 // --------------------------------------------------------------------------
+// Logs render through a read-only xterm instance: ANSI colors from the app
+// render natively, scrollback is capped by the terminal (bounded memory), and
+// canvas rendering stays fast under a firehose. We line-buffer incoming chunks
+// so level-based highlighting works on whole lines.
+let logsTerm = null;
+let logsFit = null;
+let logsPartial = '';
+
+// ANSI color helpers
+const ANSI = { reset: '\x1b[0m', red: '\x1b[31m', yellow: '\x1b[33m', green: '\x1b[32m', cyan: '\x1b[36m', dim: '\x1b[90m', boldRed: '\x1b[1;31m' };
+
+function ensureLogsTerm() {
+  if (logsTerm) return;
+  logsTerm = new Terminal({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 12,
+    cursorBlink: false,
+    disableStdin: true,
+    convertEol: true,
+    scrollback: 10000,
+    theme: termTheme(),
+  });
+  logsFit = new FitAddon.FitAddon();
+  logsTerm.loadAddon(logsFit);
+  logsTerm.open($('#logs-output'));
+}
+
+// Highlight common log levels / timestamps when the app didn't emit its own
+// ANSI. If a line already contains an escape sequence, leave it untouched.
+function colorizeLine(line, stream) {
+  if (line.indexOf('\x1b') !== -1) return line; // app already colored it
+  let out = line;
+  // ISO-ish timestamps and [bracketed] times → dim
+  out = out.replace(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/g, `${ANSI.dim}$1${ANSI.reset}`);
+  // Level keywords
+  out = out.replace(/\b(ERROR|FATAL|SEVERE|PANIC)\b/g, `${ANSI.boldRed}$1${ANSI.reset}`);
+  out = out.replace(/\b(WARN(?:ING)?)\b/g, `${ANSI.yellow}$1${ANSI.reset}`);
+  out = out.replace(/\b(INFO|NOTICE)\b/g, `${ANSI.green}$1${ANSI.reset}`);
+  out = out.replace(/\b(DEBUG|TRACE)\b/g, `${ANSI.cyan}$1${ANSI.reset}`);
+  if (stream === 'stderr' && out === line) out = `${ANSI.red}${line}${ANSI.reset}`;
+  return out;
+}
+
 async function openLogs(id, name) {
   closeLogsStream();
   state.currentLogId = id;
   $('#logs-title').textContent = `Logs · ${name}`;
-  $('#logs-output').innerHTML = '';
   $('#logs-drawer').classList.remove('hidden');
+
+  ensureLogsTerm();
+  logsTerm.options.theme = termTheme();
+  logsTerm.reset();
+  logsPartial = '';
+  await new Promise((r) => requestAnimationFrame(r));
+  try { logsFit.fit(); } catch (_) { /* noop */ }
 
   state.logUnsub = window.api.logs.onData((p) => {
     if (p.id !== state.currentLogId) return;
@@ -683,12 +732,26 @@ async function openLogs(id, name) {
 }
 
 function appendLog(text, stream) {
-  const out = $('#logs-output');
-  const span = document.createElement('span');
-  span.className = stream === 'stderr' ? 'log-stderr' : 'log-stdout';
-  span.textContent = text;
-  out.appendChild(span);
-  if ($('#logs-follow').checked) out.scrollTop = out.scrollHeight;
+  if (!logsTerm) return;
+  // Line-buffer so colorization sees whole lines; hold the trailing partial.
+  const combined = logsPartial + text;
+  const parts = combined.split('\n');
+  logsPartial = parts.pop(); // last piece is incomplete (no newline yet)
+  for (const line of parts) {
+    logsTerm.write(colorizeLine(line, stream) + '\r\n');
+  }
+  if ($('#logs-follow').checked) logsTerm.scrollToBottom();
+}
+
+function clearLogs() {
+  if (logsTerm) logsTerm.clear();
+  logsPartial = '';
+}
+
+function fitLogs() {
+  if (logsFit && logsTerm && !$('#logs-drawer').classList.contains('hidden')) {
+    try { logsFit.fit(); } catch (_) { /* noop */ }
+  }
 }
 
 function closeLogsStream() {
@@ -828,62 +891,91 @@ $('#command-copy').addEventListener('click', () => {
 });
 
 // --------------------------------------------------------------------------
-// Shell
+// Shell — real terminal via xterm.js
 // --------------------------------------------------------------------------
+let shellTerm = null;
+let shellFit = null;
+let shellInputDisposable = null;
 let shellCleanup = { data: null, end: null };
 let shellContainerId = null;
+
+function termTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (n) => css.getPropertyValue(n).trim();
+  return {
+    background: v('--logs-bg') || '#0b0e13',
+    foreground: v('--text') || '#e6edf3',
+    cursor: v('--blue') || '#388bfd',
+    selectionBackground: 'rgba(56,139,253,0.3)',
+  };
+}
+
+function ensureTerm() {
+  if (shellTerm) return;
+  shellTerm = new Terminal({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 12,
+    cursorBlink: true,
+    theme: termTheme(),
+    scrollback: 5000,
+  });
+  shellFit = new FitAddon.FitAddon();
+  shellTerm.loadAddon(shellFit);
+  shellTerm.open($('#shell-terminal'));
+}
+
+function fitAndResize() {
+  if (!shellFit || !shellTerm) return;
+  try { shellFit.fit(); } catch (_) { /* noop */ }
+  window.api.exec.resize(shellTerm.cols, shellTerm.rows);
+}
 
 function closeShell() {
   window.api.exec.stop();
   if (shellCleanup.data) shellCleanup.data();
   if (shellCleanup.end) shellCleanup.end();
+  if (shellInputDisposable) { shellInputDisposable.dispose(); shellInputDisposable = null; }
   shellCleanup = { data: null, end: null };
   shellContainerId = null;
   $('#shell-overlay').classList.add('hidden');
-  $('#shell-terminal').innerHTML = '';
 }
 
 async function openShell(id, name) {
-  closeShell();
+  // tear down any prior session but keep the terminal instance
+  window.api.exec.stop();
+  if (shellCleanup.data) shellCleanup.data();
+  if (shellCleanup.end) shellCleanup.end();
+  if (shellInputDisposable) { shellInputDisposable.dispose(); shellInputDisposable = null; }
+  shellCleanup = { data: null, end: null };
+
   shellContainerId = id;
   $('#shell-title').textContent = `Shell — ${name}`;
   $('#shell-overlay').classList.remove('hidden');
-  $('#shell-input').value = '';
-  $('#shell-input').focus();
+
+  ensureTerm();
+  shellTerm.options.theme = termTheme();
+  shellTerm.reset();
+  // wait a frame so the now-visible container has layout, then size to fit
+  await new Promise((r) => requestAnimationFrame(r));
+  try { shellFit.fit(); } catch (_) { /* noop */ }
+  shellTerm.focus();
 
   const shell = $('#shell-select').value;
-  const res = await window.api.exec.start(id, shell);
+  const res = await window.api.exec.start(id, shell, { cols: shellTerm.cols, rows: shellTerm.rows });
   if (!res.ok) {
-    appendShellText(`Error: ${res.error}\n`, true);
+    shellTerm.write(`\r\n\x1b[31mError: ${res.error}\x1b[0m\r\n`);
     return;
   }
 
-  shellCleanup.data = window.api.exec.onData((text) => {
-    appendShellText(text, false);
-  });
+  // keystrokes → container
+  shellInputDisposable = shellTerm.onData((data) => window.api.exec.write(data));
+  // container → terminal
+  shellCleanup.data = window.api.exec.onData((text) => shellTerm.write(text));
   shellCleanup.end = window.api.exec.onEnd((payload) => {
-    if (payload && payload.error) appendShellText(`\nSession ended: ${payload.error}\n`, true);
-    else appendShellText('\n--- session ended ---\n', true);
+    if (payload && payload.error) shellTerm.write(`\r\n\x1b[31mSession ended: ${payload.error}\x1b[0m\r\n`);
+    else shellTerm.write('\r\n\x1b[90m--- session ended ---\x1b[0m\r\n');
   });
 }
-
-function appendShellText(text, isError) {
-  const term = $('#shell-terminal');
-  const span = document.createElement('span');
-  if (isError) span.style.color = 'var(--red-fg)';
-  span.textContent = text;
-  term.appendChild(span);
-  term.scrollTop = term.scrollHeight;
-}
-
-$('#shell-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const val = $('#shell-input').value;
-    window.api.exec.write(val + '\n');
-    $('#shell-input').value = '';
-  }
-});
 
 $('#shell-close').addEventListener('click', closeShell);
 $('#shell-overlay').addEventListener('click', (e) => {
@@ -895,6 +987,11 @@ $('#shell-select').addEventListener('change', () => {
     const name = $('#shell-title').textContent.replace('Shell — ', '');
     openShell(shellContainerId, name);
   }
+});
+
+window.addEventListener('resize', () => {
+  if (!$('#shell-overlay').classList.contains('hidden')) fitAndResize();
+  fitLogs();
 });
 
 $('#btn-config').addEventListener('click', openConfig);
@@ -941,6 +1038,7 @@ $('#config-overlay').addEventListener('click', (e) => {
         const dy = startY - ev.clientY;
         const newH = Math.max(MIN_H, Math.min(window.innerHeight * MAX_RATIO, startH + dy));
         drawer.style.height = newH + 'px';
+        fitLogs();
         raf = null;
       });
     }
@@ -950,6 +1048,7 @@ $('#config-overlay').addEventListener('click', (e) => {
       document.removeEventListener('mouseup', onUp);
       if (raf) { cancelAnimationFrame(raf); raf = null; }
       localStorage.setItem('drawer-height', drawer.offsetHeight);
+      fitLogs();
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -958,6 +1057,7 @@ $('#config-overlay').addEventListener('click', (e) => {
   handle.addEventListener('dblclick', () => {
     drawer.style.height = '55vh';
     localStorage.removeItem('drawer-height');
+    fitLogs();
   });
 })();
 
@@ -1122,7 +1222,7 @@ $('#logs-close').addEventListener('click', () => {
   closeLogsStream();
   $('#logs-drawer').classList.add('hidden');
 });
-$('#logs-clear').addEventListener('click', () => { $('#logs-output').innerHTML = ''; });
+$('#logs-clear').addEventListener('click', clearLogs);
 
 $('#btn-colima-start').addEventListener('click', async () => {
   const btn = $('#btn-colima-start');

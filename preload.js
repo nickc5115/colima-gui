@@ -22,8 +22,9 @@ contextBridge.exposeInMainWorld('api', {
     stats: (id) => ipcRenderer.invoke('container:stats', id),
   },
   exec: {
-    start: (id, shell) => ipcRenderer.invoke('exec:start', id, shell),
+    start: (id, shell, size) => ipcRenderer.invoke('exec:start', id, shell, size),
     write: (data) => ipcRenderer.invoke('exec:write', data),
+    resize: (cols, rows) => ipcRenderer.invoke('exec:resize', cols, rows),
     stop: () => ipcRenderer.invoke('exec:stop'),
     onData: (cb) => {
       const handler = (_e, payload) => cb(payload);

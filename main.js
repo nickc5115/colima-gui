@@ -223,7 +223,9 @@ function stopActiveExecStream() {
   }
 }
 
-ipcMain.handle('exec:start', async (event, id, shell) => {
+let activeExec = null;
+
+ipcMain.handle('exec:start', async (event, id, shell, size) => {
   try {
     stopActiveExecStream();
     const { docker } = getDocker();
@@ -237,6 +239,12 @@ ipcMain.handle('exec:start', async (event, id, shell) => {
     });
     const stream = await exec.start({ hijack: true, stdin: true, Tty: true });
     activeExecStream = stream;
+    activeExec = exec;
+
+    // Match the PTY to the terminal's dimensions so line-wrapping is correct.
+    if (size && size.cols && size.rows) {
+      try { await exec.resize({ w: size.cols, h: size.rows }); } catch (_) { /* noop */ }
+    }
 
     const send = (channel, payload) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
@@ -260,8 +268,17 @@ ipcMain.handle('exec:write', async (_e, data) => {
   return { ok: false, error: 'No active exec session' };
 });
 
+ipcMain.handle('exec:resize', async (_e, cols, rows) => {
+  if (activeExec && cols && rows) {
+    try { await activeExec.resize({ w: cols, h: rows }); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  return { ok: false };
+});
+
 ipcMain.handle('exec:stop', async () => {
   stopActiveExecStream();
+  activeExec = null;
   return { ok: true };
 });
 
