@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac"
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:universal": "electron-builder --mac --universal"
   },
   "author": "",
   "license": "MIT",
