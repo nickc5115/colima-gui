@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colima GUI</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function() {
+      var p = localStorage.getItem('theme') || 'system';
+      var t = p === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : p;
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="brand">
+        <img class="logo" src="../assets/icon.png" alt="" />
+        <span class="brand-text">Colima GUI</span>
+        <select id="theme-select" class="theme-select">
+          <option value="system">☀︎ System</option>
+          <option value="dark">🌙 Dark</option>
+          <option value="light">☀︎ Light</option>
+        </select>
+      </div>
+
+      <div class="colima-card">
+        <div class="row">
+          <span class="muted">Profile</span>
+          <select id="colima-profile" class="profile-select">
+            <option value="default">default</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="muted">Status</span>
+          <span id="colima-status" class="status status-unknown">…</span>
+        </div>
+        <div class="row" id="colima-specs"></div>
+        <div class="colima-actions">
+          <button id="btn-colima-start" class="btn btn-green">Start</button>
+          <button id="btn-colima-stop" class="btn btn-red">Stop</button>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="containers" data-tip="Containers">
+          <svg viewBox="0 0 16 16" class="nav-icon"><rect x="1" y="4" width="14" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="5.5" y1="4" x2="5.5" y2="13" stroke="currentColor" stroke-width="1"/><line x1="10.5" y1="4" x2="10.5" y2="13" stroke="currentColor" stroke-width="1"/><line x1="1" y1="8.5" x2="15" y2="8.5" stroke="currentColor" stroke-width="1"/></svg>
+          <span class="nav-label">Containers</span>
+        </button>
+        <button class="nav-item" data-tab="images" data-tip="Images">
+          <svg viewBox="0 0 16 16" class="nav-icon"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="8" y1="2" x2="8" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="8" y1="12" x2="8" y2="14" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span class="nav-label">Images</span>
+        </button>
+        <button class="nav-item" data-tab="volumes" data-tip="Volumes">
+          <svg viewBox="0 0 16 16" class="nav-icon"><ellipse cx="8" cy="4" rx="6" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 4v8c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 8c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span class="nav-label">Volumes</span>
+        </button>
+        <button class="nav-item" data-tab="compose" data-tip="Compose">
+          <svg viewBox="0 0 16 16" class="nav-icon"><rect x="2" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span class="nav-label">Compose</span>
+        </button>
+        <button class="nav-item" data-tab="networks" data-tip="Networks">
+          <svg viewBox="0 0 16 16" class="nav-icon"><circle cx="8" cy="3" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="13" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.8v3M7 6.5L4 10.5M9 6.5l3 4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span class="nav-label">Networks</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-nav-sep"></div>
+        <button id="btn-config" class="nav-item" data-tip="Configuration">
+          <svg viewBox="0 0 16 16" class="nav-icon"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.9 2.9l1.4 1.4M11.7 11.7l1.4 1.4M13.1 2.9l-1.4 1.4M4.3 11.7l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <span class="nav-label">Configuration</span>
+        </button>
+        <button id="btn-refresh" class="nav-item" data-tip="Refresh">
+          <svg viewBox="0 0 16 16" class="nav-icon"><path d="M2.5 8a5.5 5.5 0 0 1 9.9-3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M13.5 8a5.5 5.5 0 0 1-9.9 3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M12.4 1.5v3.3h-3.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.6 14.5v-3.3h3.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label">Refresh</span>
+        </button>
+        <button id="sidebar-expand" class="sidebar-expand" data-tip="Expand">
+          <svg viewBox="0 0 16 16" class="sidebar-expand-icon"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div id="global-error" class="global-error hidden"></div>
+    </aside>
+
+    <!-- Main -->
+    <main id="main">
+      <div class="search-bar">
+        <input id="filter-input" type="text" placeholder="Filter by name, image, or tag…" class="filter-input" />
+      </div>
+      <section id="view-containers" class="view">
+        <table class="grid" id="containers-table">
+          <thead>
+            <tr>
+              <th>State</th><th>Name</th><th>Image</th><th>CPU / Mem</th><th>Ports</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="containers-body"></tbody>
+        </table>
+        <div id="containers-empty" class="empty hidden">No containers.</div>
+      </section>
+
+      <section id="view-images" class="view hidden">
+        <div class="view-toolbar">
+          <button id="btn-prune" class="btn btn-ghost">Prune unused images</button>
+        </div>
+        <table class="grid" id="images-table">
+          <thead>
+            <tr><th>Repository:Tag</th><th>Image ID</th><th>Size</th><th></th></tr>
+          </thead>
+          <tbody id="images-body"></tbody>
+        </table>
+        <div id="images-empty" class="empty hidden">No images.</div>
+      </section>
+
+      <section id="view-volumes" class="view hidden">
+        <div class="view-toolbar">
+          <button id="btn-prune-volumes" class="btn btn-ghost">Prune unused volumes</button>
+        </div>
+        <table class="grid" id="volumes-table">
+          <thead>
+            <tr><th>Name</th><th>Driver</th><th>Created</th><th></th></tr>
+          </thead>
+          <tbody id="volumes-body"></tbody>
+        </table>
+        <div id="volumes-empty" class="empty hidden">No volumes.</div>
+      </section>
+
+      <section id="view-compose" class="view hidden">
+        <div id="compose-body"></div>
+        <div id="compose-empty" class="empty hidden">No Compose projects found.<br /><span class="muted" style="font-size:11px;">Containers started with <code>docker compose</code> appear here grouped by project.</span></div>
+      </section>
+
+      <section id="view-networks" class="view hidden">
+        <div class="view-toolbar">
+          <button id="btn-prune-networks" class="btn btn-ghost">Prune unused networks</button>
+        </div>
+        <table class="grid" id="networks-table">
+          <thead>
+            <tr><th>Name</th><th>Driver</th><th>Scope</th><th>Subnet</th><th>Containers</th><th></th></tr>
+          </thead>
+          <tbody id="networks-body"></tbody>
+        </table>
+        <div id="networks-empty" class="empty hidden">No networks.</div>
+      </section>
+    </main>
+
+    <!-- Logs drawer -->
+    <div id="logs-drawer" class="drawer hidden">
+      <div id="drawer-resize" class="drawer-resize-handle"></div>
+      <div class="drawer-header">
+        <span id="logs-title">Logs</span>
+        <div class="drawer-controls">
+          <label class="follow"><input type="checkbox" id="logs-follow" checked /> Auto-scroll</label>
+          <button id="logs-clear" class="btn btn-ghost">Clear</button>
+          <button id="logs-close" class="btn btn-ghost">✕</button>
+        </div>
+      </div>
+      <pre id="logs-output"></pre>
+    </div>
+  </div>
+
+  <!-- Run command modal -->
+  <div id="command-overlay" class="modal-overlay hidden">
+    <div class="modal" style="width: 620px;">
+      <div class="modal-header">
+        <span class="modal-title">Run Command</span>
+        <div class="modal-header-actions">
+          <button id="command-copy" class="btn btn-ghost btn-sm">Copy</button>
+          <button id="command-close" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <pre id="command-output" class="command-output"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shell modal -->
+  <div id="shell-overlay" class="modal-overlay hidden">
+    <div class="modal shell-modal">
+      <div class="modal-header">
+        <span class="modal-title" id="shell-title">Shell</span>
+        <div class="modal-header-actions">
+          <select id="shell-select" class="theme-select">
+            <option value="/bin/sh">sh</option>
+            <option value="/bin/bash">bash</option>
+            <option value="/bin/zsh">zsh</option>
+          </select>
+          <button id="shell-close" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+      </div>
+      <div id="shell-terminal" class="shell-terminal"></div>
+      <div class="shell-input-row">
+        <input id="shell-input" type="text" class="shell-input" placeholder="Type command and press Enter…" autocomplete="off" spellcheck="false" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Config modal -->
+  <div id="config-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Configuration</span>
+        <div class="modal-header-actions">
+          <button id="config-toggle-advanced" class="btn btn-ghost btn-sm">Advanced</button>
+          <button id="config-close" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+      </div>
+
+      <div id="config-form-view" class="modal-body">
+        <div class="config-section-label">GUI Settings</div>
+        <div class="config-field">
+          <label for="cfg-stats-interval">Stats Refresh</label>
+          <select id="cfg-stats-interval" class="config-input">
+            <option value="2">2s</option>
+            <option value="5">5s</option>
+            <option value="10">10s</option>
+            <option value="15">15s</option>
+            <option value="30">30s</option>
+          </select>
+        </div>
+        <div class="config-field">
+          <label for="cfg-cpu-normalize">CPU % Display</label>
+          <select id="cfg-cpu-normalize" class="config-input">
+            <option value="normalized">Normalized (max 100%)</option>
+            <option value="raw">Per-core (max N×100%)</option>
+          </select>
+        </div>
+        <div class="config-section-label">Colima VM</div>
+        <div class="config-field">
+          <label for="cfg-cpu">CPU</label>
+          <input id="cfg-cpu" type="number" min="1" max="32" class="config-input" />
+        </div>
+        <div class="config-field">
+          <label for="cfg-memory">Memory (GB)</label>
+          <input id="cfg-memory" type="number" min="1" max="128" class="config-input" />
+        </div>
+        <div class="config-field">
+          <label for="cfg-disk">Disk (GB)</label>
+          <input id="cfg-disk" type="number" min="10" max="1000" class="config-input" />
+        </div>
+        <div class="config-field">
+          <label for="cfg-runtime">Runtime</label>
+          <select id="cfg-runtime" class="config-input">
+            <option value="docker">docker</option>
+            <option value="containerd">containerd</option>
+          </select>
+        </div>
+        <div class="config-field">
+          <label for="cfg-kubernetes">Kubernetes</label>
+          <select id="cfg-kubernetes" class="config-input">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </div>
+        <div class="config-field">
+          <label for="cfg-vmtype">VM Type</label>
+          <select id="cfg-vmtype" class="config-input">
+            <option value="qemu">qemu</option>
+            <option value="vz">vz (macOS Virtualization.framework)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="config-advanced-view" class="modal-body hidden">
+        <textarea id="cfg-raw" class="config-editor" spellcheck="false"></textarea>
+      </div>
+
+      <div id="config-error" class="config-error hidden"></div>
+      <div class="modal-footer">
+        <span id="config-path" class="muted config-path-label"></span>
+        <div class="modal-footer-actions">
+          <button id="config-save" class="btn btn-green">Save &amp; Restart</button>
+          <button id="config-save-only" class="btn btn-ghost">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

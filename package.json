@@ -1,0 +1,39 @@
+{
+  "name": "colima-gui",
+  "version": "1.0.0",
+  "description": "A minimal Docker-Desktop-style GUI for Colima",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac"
+  },
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.colima-gui.app",
+    "productName": "Colima GUI",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": ["dmg"],
+      "hardenedRuntime": false
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/icon.png",
+      "assets/icon.icns",
+      "node_modules/**/*"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "js-yaml": "^4.2.0"
+  }
+}
