@@ -35,6 +35,8 @@ const state = {
   logUnsub: null,
   endUnsub: null,
   currentLogId: null,
+  colimaLogUnsub: null,
+  composeLogUnsub: null,
   eventUnsub: null,
   eventEndUnsub: null,
   statsTimers: new Map(),
@@ -217,14 +219,25 @@ function stopAllStatsTimers() {
   state.statsTimers.clear();
 }
 
+const STAT_CPU_ICON = '<svg class="stat-icon" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="5.5" y="5.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="8.5" y="5.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="5.5" y="8.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="8.5" y="8.5" width="2" height="2" rx=".4" fill="currentColor"/><line x1="1" y1="6" x2="3" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="1" y1="10" x2="3" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="13" y1="6" x2="15" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="13" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>';
+const STAT_MEM_ICON = '<svg class="stat-icon" viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="4" y="6" width="2.5" height="4" rx=".5" fill="currentColor"/><line x1="8" y1="6" x2="8" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="6" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>';
+
+// Two-row markup, matching the populated stats layout, so the placeholder and
+// the live values occupy the same height — no row-height jump on refresh.
+function statsMarkup(cpuText, memText, cls) {
+  const c = cls ? ` ${cls}` : '';
+  return `<div class="stat-row">${STAT_CPU_ICON}<span class="stat-cpu${c}">${cpuText}</span></div>` +
+         `<div class="stat-row">${STAT_MEM_ICON}<span class="stat-mem${c}">${memText}</span></div>`;
+}
+
 async function fetchStats(id) {
   const cell = document.querySelector(`[data-stats-id="${id}"]`);
   if (!cell) return;
   const res = await window.api.container.stats(id);
-  if (!res.ok) { cell.textContent = '—'; return; }
+  if (!res.ok) { cell.innerHTML = statsMarkup('—', '—', 'muted'); return; }
   const normalize = localStorage.getItem('cpu-display') !== 'raw';
   const cpu = normalize ? res.cpu / (res.cpuCount || 1) : res.cpu;
-  cell.innerHTML = `<div class="stat-row"><svg class="stat-icon" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="5.5" y="5.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="8.5" y="5.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="5.5" y="8.5" width="2" height="2" rx=".4" fill="currentColor"/><rect x="8.5" y="8.5" width="2" height="2" rx=".4" fill="currentColor"/><line x1="1" y1="6" x2="3" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="1" y1="10" x2="3" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="13" y1="6" x2="15" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="13" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="1.2"/></svg><span class="stat-cpu">${cpu.toFixed(1)}%</span></div><div class="stat-row"><svg class="stat-icon" viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="4" y="6" width="2.5" height="4" rx=".5" fill="currentColor"/><line x1="8" y1="6" x2="8" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="6" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/></svg><span class="stat-mem">${humanSize(res.memUsage)} / ${humanSize(res.memLimit)}</span></div>`;
+  cell.innerHTML = statsMarkup(`${cpu.toFixed(1)}%`, `${humanSize(res.memUsage)} / ${humanSize(res.memLimit)}`);
 }
 
 async function refreshContainers() {
@@ -245,7 +258,7 @@ async function refreshContainers() {
       <td><span class="dot ${running ? 'dot-running' : 'dot-stopped'}"></span>${c.state}</td>
       <td class="col-name" title="${escapeHtml(c.name)}">${escapeHtml(c.name)}</td>
       <td class="mono col-image" title="${escapeHtml(c.image)}">${escapeHtml(c.image)}</td>
-      <td class="stats-cell col-stats" data-stats-id="${c.id}">${running ? '<span class="muted">…</span>' : '—'}</td>
+      <td class="stats-cell col-stats" data-stats-id="${c.id}">${running ? statsMarkup('…', '…', 'muted') : '—'}</td>
       <td class="ports col-ports" title="${c.ports.join('\n') || ''}">${c.ports.join('<br>') || '—'}</td>
       <td class="muted col-status">${escapeHtml(c.status)}</td>
       <td class="col-actions"><div class="actions"></div></td>`;
@@ -388,22 +401,53 @@ async function removeImage(id, tag) {
   await refreshImages();
 }
 
-async function pruneImages() {
-  if (!confirm('Remove all dangling (unused) images?')) return;
-  const res = await window.api.image.prune();
-  if (!res.ok) { showError(res.error); return; }
+function flashSuccess(msg) {
   showError('');
-  const msg = `Pruned — reclaimed ${humanSize(res.reclaimed)}`;
   const el = $('#global-error');
   el.textContent = msg;
   el.classList.remove('hidden');
   el.style.borderColor = 'var(--green)';
   el.style.background = 'rgba(46,160,67,0.12)';
   el.style.color = '#7ee787';
-  setTimeout(() => {
-    el.classList.add('hidden');
-    el.removeAttribute('style');
-  }, 4000);
+  setTimeout(() => { el.classList.add('hidden'); el.removeAttribute('style'); }, 4000);
+}
+
+// Show exactly which dangling images a prune would remove, then confirm.
+async function pruneImages() {
+  const res = await window.api.image.listDangling();
+  if (!res.ok) { showError(res.error); return; }
+  const imgs = res.images;
+  const list = $('#prune-list');
+  const totalBytes = imgs.reduce((sum, i) => sum + (i.size || 0), 0);
+
+  if (!imgs.length) {
+    $('#prune-summary').textContent = 'No dangling images to remove.';
+    list.innerHTML = '';
+    $('#prune-total').textContent = '';
+    $('#prune-confirm').classList.add('hidden');
+  } else {
+    $('#prune-summary').textContent = `${imgs.length} dangling image${imgs.length === 1 ? '' : 's'} will be removed (untagged <none> layers). Tagged images are kept.`;
+    list.innerHTML = imgs.map((i) => `
+      <div class="prune-row">
+        <span class="mono">${i.id}</span>
+        <span class="muted mono">&lt;none&gt;</span>
+        <span class="muted">${humanSize(i.size)}</span>
+      </div>`).join('');
+    $('#prune-total').textContent = `Reclaims ~${humanSize(totalBytes)}`;
+    const confirmBtn = $('#prune-confirm');
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = `Remove ${imgs.length} image${imgs.length === 1 ? '' : 's'}`;
+  }
+  $('#prune-overlay').classList.remove('hidden');
+}
+
+function closePruneModal() { $('#prune-overlay').classList.add('hidden'); }
+
+async function confirmPrune() {
+  closePruneModal();
+  const res = await window.api.image.prune();
+  if (!res.ok) { showError(res.error); return; }
+  flashSuccess(`Pruned ${res.deleted || 0} image${res.deleted === 1 ? '' : 's'} — reclaimed ${humanSize(res.reclaimed)}`);
   await refreshImages();
 }
 
@@ -531,6 +575,7 @@ async function refreshCompose() {
     if (workdir) header.title = workdir;
 
     const headerActions = header.querySelector('.compose-actions');
+    headerActions.appendChild(mkBtn('Logs', 'btn btn-ghost btn-sm', () => openComposeLogs(project, services)));
     headerActions.appendChild(mkBtn('Start', 'btn btn-green btn-sm', () => composeBulk(services, 'start')));
     headerActions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => composeBulk(services, 'stop')));
     headerActions.appendChild(mkBtn('Restart', 'btn btn-ghost btn-sm', () => composeBulk(services, 'restart')));
@@ -554,6 +599,7 @@ async function refreshCompose() {
       for (const c of services) {
         const running = c.state === 'running';
         const tr = document.createElement('tr');
+        tr.dataset.svcId = c.id;
         tr.innerHTML = `
           <td class="compose-svc-state"><span class="dot ${running ? 'dot-running' : 'dot-stopped'}"></span></td>
           <td class="compose-svc-name">${escapeHtml(c.composeService || c.name)}</td>
@@ -563,10 +609,10 @@ async function refreshCompose() {
           <td class="col-actions"><div class="actions"></div></td>`;
         const actions = tr.querySelector('.actions');
         if (running) {
-          actions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => act('stop', c.id)));
-          actions.appendChild(mkBtn('Restart', 'btn btn-ghost btn-sm', () => act('restart', c.id)));
+          actions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => composeSvcAction('stop', c.id)));
+          actions.appendChild(mkBtn('Restart', 'btn btn-ghost btn-sm', () => composeSvcAction('restart', c.id)));
         } else {
-          actions.appendChild(mkBtn('Start', 'btn btn-green btn-sm', () => act('start', c.id)));
+          actions.appendChild(mkBtn('Start', 'btn btn-green btn-sm', () => composeSvcAction('start', c.id)));
         }
         const menuItems = [{ label: 'Logs', icon: 'logs', action: () => openLogs(c.id, c.name) }];
         if (running) menuItems.push({ label: 'Shell', icon: 'shell', action: () => openShell(c.id, c.name) });
@@ -583,16 +629,40 @@ async function refreshCompose() {
   applyFilter();
 }
 
+const ACTION_VERB = { start: 'starting…', stop: 'stopping…', restart: 'restarting…' };
+
+// Mark a service row as in-progress: spinner in the state cell, verb in the
+// status cell, action buttons disabled. The next refreshCompose() repaints it.
+function setComposePending(id, verb) {
+  const tr = document.querySelector(`#compose-body tr[data-svc-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`);
+  if (!tr) return;
+  const stateCell = tr.querySelector('.compose-svc-state');
+  if (stateCell) stateCell.innerHTML = '<span class="row-spinner"></span>';
+  const statusCell = tr.querySelector('.compose-svc-status');
+  if (statusCell) { statusCell.textContent = verb; statusCell.classList.add('svc-pending'); }
+  tr.querySelectorAll('.actions button').forEach((b) => { b.disabled = true; });
+}
+
+async function composeSvcAction(action, id) {
+  setComposePending(id, ACTION_VERB[action] || 'working…');
+  const res = await window.api.container[action](id);
+  if (!res.ok) showError(res.error);
+  await refreshCompose();
+}
+
 async function composeBulk(services, action) {
   const targets = services.filter((s) => {
     if (action === 'start') return s.state !== 'running';
     if (action === 'stop') return s.state === 'running';
     return true; // restart all
   });
-  for (const c of targets) {
+  const verb = ACTION_VERB[action] || 'working…';
+  // Show every affected row as pending up front, then fire concurrently.
+  targets.forEach((c) => setComposePending(c.id, verb));
+  await Promise.all(targets.map(async (c) => {
     const res = await window.api.container[action](c.id);
     if (!res.ok) showError(res.error);
-  }
+  }));
   await refreshCompose();
 }
 
@@ -694,6 +764,17 @@ function ensureLogsTerm() {
 // ANSI. If a line already contains an escape sequence, leave it untouched.
 function colorizeLine(line, stream) {
   if (line.indexOf('\x1b') !== -1) return line; // app already colored it
+
+  // Structured JSON logs (e.g. Colima/Lima): tint the whole line by its level.
+  const jsonLevel = line.match(/"level":\s*"(\w+)"/);
+  if (jsonLevel) {
+    const lvl = jsonLevel[1].toLowerCase();
+    if (lvl === 'error' || lvl === 'fatal' || lvl === 'panic') return `${ANSI.boldRed}${line}${ANSI.reset}`;
+    if (lvl === 'warn' || lvl === 'warning') return `${ANSI.yellow}${line}${ANSI.reset}`;
+    if (lvl === 'debug' || lvl === 'trace') return `${ANSI.dim}${line}${ANSI.reset}`;
+    return line; // info/notice → default
+  }
+
   let out = line;
   // ISO-ish timestamps and [bracketed] times → dim
   out = out.replace(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/g, `${ANSI.dim}$1${ANSI.reset}`);
@@ -757,8 +838,74 @@ function fitLogs() {
 function closeLogsStream() {
   if (state.logUnsub) { state.logUnsub(); state.logUnsub = null; }
   if (state.endUnsub) { state.endUnsub(); state.endUnsub = null; }
+  if (state.colimaLogUnsub) { state.colimaLogUnsub(); state.colimaLogUnsub = null; }
+  if (state.composeLogUnsub) { state.composeLogUnsub(); state.composeLogUnsub = null; window.api.logs.stopCompose(); }
   window.api.logs.stop();
   state.currentLogId = null;
+}
+
+// Combined Compose logs — interleave every service, each line prefixed with a
+// per-service colored tag (like `docker compose logs`). Buffer per service so a
+// chunk split mid-line doesn't garble the prefix.
+const COMPOSE_COLORS = ['\x1b[36m', '\x1b[32m', '\x1b[33m', '\x1b[35m', '\x1b[34m', '\x1b[96m', '\x1b[92m', '\x1b[95m'];
+let composePartials = {};
+let composePadWidth = 12;
+
+function composeColorFor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return COMPOSE_COLORS[h % COMPOSE_COLORS.length];
+}
+
+function appendComposeLog(service, text, stream) {
+  if (!logsTerm) return;
+  const prev = composePartials[service] || '';
+  const parts = (prev + text).split('\n');
+  composePartials[service] = parts.pop();
+  const color = composeColorFor(service);
+  const label = (service.length > composePadWidth ? service.slice(0, composePadWidth) : service.padEnd(composePadWidth));
+  const prefix = `${color}${label}\x1b[0m \x1b[90m|\x1b[0m `;
+  for (const line of parts) {
+    logsTerm.write(prefix + colorizeLine(line, stream) + '\r\n');
+  }
+  if ($('#logs-follow').checked) logsTerm.scrollToBottom();
+}
+
+async function openComposeLogs(project, services) {
+  composePartials = {};
+  composePadWidth = Math.min(20, Math.max(...services.map((s) => (s.composeService || s.name).length), 6));
+  await prepLogDrawer(`Compose · ${project}`);
+  const list = services.map((s) => ({ id: s.id, service: s.composeService || s.name }));
+  state.composeLogUnsub = window.api.logs.onComposeData((p) => appendComposeLog(p.service, p.line, p.stream));
+  const res = await window.api.logs.startCompose(list);
+  if (!res.ok) appendLog(`[failed to attach compose logs: ${res.error}]\n`, 'stderr');
+}
+
+// Prepare the shared xterm drawer for a non-container source (Colima logs).
+async function prepLogDrawer(title) {
+  closeLogsStream();
+  $('#logs-title').textContent = title;
+  $('#logs-drawer').classList.remove('hidden');
+  ensureLogsTerm();
+  logsTerm.options.theme = termTheme();
+  logsTerm.reset();
+  logsPartial = '';
+  await new Promise((r) => requestAnimationFrame(r));
+  try { logsFit.fit(); } catch (_) { /* noop */ }
+}
+
+// Read the persisted Lima boot log and show it in the drawer.
+async function viewColimaLogs() {
+  await prepLogDrawer('Colima · startup log');
+  const res = await window.api.colima.logs($('#colima-profile').value);
+  if (!res.ok) { appendLog(`[${res.error}]\n`, 'stderr'); return; }
+  appendLog(res.text, 'stdout');
+}
+
+// Subscribe to live `colima start` output and stream it into the drawer.
+async function streamColimaStart() {
+  await prepLogDrawer('Colima · starting…');
+  state.colimaLogUnsub = window.api.colima.onStartLog((text) => appendLog(text, 'stdout'));
 }
 
 // --------------------------------------------------------------------------
@@ -1007,9 +1154,8 @@ $('#config-save-only').addEventListener('click', async () => {
   btn.classList.add('loading');
   try { await saveConfig(false); } finally { btn.classList.remove('loading'); }
 });
-$('#config-overlay').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeConfig();
-});
+// Config modal does NOT close on outside click — only the X or Save buttons,
+// so an accidental click can't discard in-progress edits.
 
 // --------------------------------------------------------------------------
 // Resizable logs drawer
@@ -1172,11 +1318,34 @@ function switchTab(tab) {
 }
 
 let refreshDebounce = null;
+// When Colima isn't running there's no docker socket — wipe any stale rows so
+// containers/images/etc. don't keep showing their last-known (e.g. "running")
+// state, and stop the per-container stats timers.
+function clearDataViews() {
+  stopAllStatsTimers();
+  for (const id of ['containers-body', 'images-body', 'volumes-body', 'networks-body']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  }
+  const compose = document.getElementById('compose-body');
+  if (compose) compose.innerHTML = '';
+  for (const [bodyId, emptyId] of [
+    ['containers-body', 'containers-empty'],
+    ['images-body', 'images-empty'],
+    ['volumes-body', 'volumes-empty'],
+    ['networks-body', 'networks-empty'],
+    ['compose-body', 'compose-empty'],
+  ]) {
+    const empty = document.getElementById(emptyId);
+    if (empty) empty.classList.toggle('hidden', `${state.tab}-body` !== bodyId);
+  }
+}
+
 async function refreshActive() {
   if (refreshDebounce) return;
   refreshDebounce = setTimeout(() => { refreshDebounce = null; }, 500);
   const running = await refreshColima();
-  if (!running) return;
+  if (!running) { clearDataViews(); return; }
   if (state.tab === 'containers') await refreshContainers();
   else if (state.tab === 'images') await refreshImages();
   else if (state.tab === 'volumes') await refreshVolumes();
@@ -1207,6 +1376,10 @@ $('#filter-input').addEventListener('input', applyFilter);
 $$('.nav-item[data-tab]').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 $('#btn-refresh').addEventListener('click', refreshActive);
 $('#btn-prune').addEventListener('click', pruneImages);
+$('#prune-cancel').addEventListener('click', closePruneModal);
+$('#prune-close').addEventListener('click', closePruneModal);
+$('#prune-confirm').addEventListener('click', confirmPrune);
+$('#prune-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) closePruneModal(); });
 $('#btn-prune-volumes').addEventListener('click', pruneVolumes);
 $('#btn-prune-networks').addEventListener('click', pruneNetworks);
 
@@ -1223,14 +1396,18 @@ $('#logs-close').addEventListener('click', () => {
   $('#logs-drawer').classList.add('hidden');
 });
 $('#logs-clear').addEventListener('click', clearLogs);
+$('#btn-colima-logs').addEventListener('click', viewColimaLogs);
 
 $('#btn-colima-start').addEventListener('click', async () => {
   const btn = $('#btn-colima-start');
   btn.classList.add('loading');
   $('#colima-status').textContent = 'starting…';
+  await streamColimaStart();
   try {
     const res = await window.api.colima.start($('#colima-profile').value);
+    if (state.colimaLogUnsub) { state.colimaLogUnsub(); state.colimaLogUnsub = null; }
     if (!res.ok) showError(res.error);
+    $('#logs-title').textContent = res.ok ? 'Colima · startup log' : 'Colima · start failed';
     await refreshActive();
   } finally { btn.classList.remove('loading'); }
 });

@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('api', {
     start: (profile) => ipcRenderer.invoke('colima:start', profile),
     stop: (profile) => ipcRenderer.invoke('colima:stop', profile),
     setProfile: (profile) => ipcRenderer.invoke('colima:setProfile', profile),
+    logs: (profile) => ipcRenderer.invoke('colima:logs', profile),
+    onStartLog: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('colima:startlog', handler);
+      return () => ipcRenderer.removeListener('colima:startlog', handler);
+    },
   },
   docker: {
     containers: () => ipcRenderer.invoke('docker:containers'),
@@ -40,6 +46,7 @@ contextBridge.exposeInMainWorld('api', {
   image: {
     remove: (id, force) => ipcRenderer.invoke('image:remove', id, force),
     prune: () => ipcRenderer.invoke('image:prune'),
+    listDangling: () => ipcRenderer.invoke('image:listDangling'),
   },
   volume: {
     list: () => ipcRenderer.invoke('docker:volumes'),
@@ -65,6 +72,13 @@ contextBridge.exposeInMainWorld('api', {
       const handler = (_e, payload) => cb(payload);
       ipcRenderer.on('logs:end', handler);
       return () => ipcRenderer.removeListener('logs:end', handler);
+    },
+    startCompose: (services) => ipcRenderer.invoke('logs:startCompose', services),
+    stopCompose: () => ipcRenderer.invoke('logs:stopCompose'),
+    onComposeData: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('logs:composeData', handler);
+      return () => ipcRenderer.removeListener('logs:composeData', handler);
     },
   },
   config: {

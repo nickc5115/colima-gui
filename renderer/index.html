@@ -44,6 +44,7 @@
           <button id="btn-colima-start" class="btn btn-green">Start</button>
           <button id="btn-colima-stop" class="btn btn-red">Stop</button>
         </div>
+        <button id="btn-colima-logs" class="btn btn-ghost btn-sm colima-logs-btn">View startup logs</button>
       </div>
 
       <nav class="sidebar-nav">
@@ -105,7 +106,7 @@
 
       <section id="view-images" class="view hidden">
         <div class="view-toolbar">
-          <button id="btn-prune" class="btn btn-ghost">Prune unused images</button>
+          <button id="btn-prune" class="btn btn-ghost">Prune dangling images</button>
         </div>
         <table class="grid" id="images-table">
           <thead>
@@ -160,6 +161,27 @@
         </div>
       </div>
       <div id="logs-output" class="logs-term"></div>
+    </div>
+  </div>
+
+  <!-- Prune preview modal -->
+  <div id="prune-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Prune dangling images</span>
+        <button id="prune-close" class="btn btn-ghost btn-sm">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="prune-summary" class="muted" style="margin-top:0;"></p>
+        <div id="prune-list" class="prune-list"></div>
+      </div>
+      <div class="modal-footer">
+        <span id="prune-total" class="muted config-path-label"></span>
+        <div class="modal-footer-actions">
+          <button id="prune-cancel" class="btn btn-ghost">Cancel</button>
+          <button id="prune-confirm" class="btn btn-red">Remove</button>
+        </div>
+      </div>
     </div>
   </div>
 

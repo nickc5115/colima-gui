@@ -135,6 +135,7 @@ html, body {
 
 .colima-actions { display: flex; gap: 8px; margin-top: 4px; }
 .colima-actions .btn { flex: 1; }
+.colima-logs-btn { width: 100%; margin-top: 8px; }
 
 /* Sidebar nav */
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; width: 100%; }
@@ -341,6 +342,22 @@ body.col-resizing * { user-select: none !important; }
 .compose-svc-image { width: 28%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; }
 .compose-svc-ports { width: 18%; font-size: 11px; }
 .compose-svc-status { width: 18%; font-size: 12px; }
+.compose-svc-status.svc-pending { color: var(--blue); font-style: italic; }
+.row-spinner {
+  display: inline-block; width: 10px; height: 10px;
+  border: 2px solid var(--border); border-top-color: var(--blue);
+  border-radius: 50%; vertical-align: middle;
+  animation: spin 0.6s linear infinite;
+}
+
+.prune-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.prune-list:empty { display: none; }
+.prune-row {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px;
+  align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.prune-row:last-child { border-bottom: none; }
 
 .net-builtin {
   font-size: 9px; padding: 1px 5px; border-radius: 8px;

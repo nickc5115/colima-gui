@@ -4,7 +4,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { PassThrough } = require('stream');
 const Docker = require('dockerode');
 const yaml = require('js-yaml');
@@ -74,19 +74,58 @@ ipcMain.handle('colima:list', async () => {
   }
 });
 
-ipcMain.handle('colima:start', async (_e, profile) => {
-  try {
-    await colima(['start', '-p', profile || activeProfile]);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+// Start streams its progress live to the renderer ('colima:startlog') so the
+// user can watch the VM boot/provision, then resolves ok/error on exit.
+ipcMain.handle('colima:start', async (event, profile) => {
+  return new Promise((resolve) => {
+    const send = (channel, payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
+    };
+    let child;
+    try {
+      child = spawn('colima', ['start', '-p', profile || activeProfile, '--verbose'], { env: EXEC_ENV });
+    } catch (e) {
+      return resolve({ ok: false, error: e.message });
+    }
+    let stderr = '';
+    child.stdout.on('data', (d) => send('colima:startlog', d.toString('utf8')));
+    child.stderr.on('data', (d) => { const s = d.toString('utf8'); stderr += s; send('colima:startlog', s); });
+    child.on('error', (e) => {
+      if (e.code === 'ENOENT') return resolve({ ok: false, error: '`colima` not found on PATH. Is it installed? (brew install colima)' });
+      resolve({ ok: false, error: e.message });
+    });
+    child.on('close', (code) => {
+      send('colima:startlog', `\n[colima start exited with code ${code}]\n`);
+      resolve(code === 0 ? { ok: true } : { ok: false, error: stderr || `colima start exited ${code}` });
+    });
+  });
 });
 
 ipcMain.handle('colima:stop', async (_e, profile) => {
   try {
     await colima(['stop', '-p', profile || activeProfile]);
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Read the persisted Lima host-agent log (the boot/provisioning output) for the
+// instance backing this profile. Default profile → lima instance "colima".
+function limaInstanceName(profile) {
+  const p = profile || activeProfile;
+  return p === 'default' ? 'colima' : `colima-${p}`;
+}
+
+ipcMain.handle('colima:logs', async (_e, profile) => {
+  try {
+    const dir = path.join(colimaHome(), '_lima', limaInstanceName(profile));
+    const stderrPath = path.join(dir, 'ha.stderr.log');
+    if (!fs.existsSync(stderrPath)) {
+      return { ok: false, error: `No Colima log found at ${stderrPath}. Has the profile been started?` };
+    }
+    const text = fs.readFileSync(stderrPath, 'utf8');
+    return { ok: true, text, path: stderrPath };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -191,12 +230,30 @@ ipcMain.handle('image:remove', async (_e, id, force) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Preview: the dangling images a prune would remove (untagged <none> layers).
+ipcMain.handle('image:listDangling', async () => {
+  try {
+    const { docker, socketPath } = getDocker();
+    if (!fs.existsSync(socketPath)) {
+      return { ok: false, error: `Docker socket not found at ${socketPath}. Is Colima running?` };
+    }
+    const list = await docker.listImages({ filters: JSON.stringify({ dangling: ['true'] }) });
+    const images = list.map((img) => ({
+      id: img.Id.replace('sha256:', '').slice(0, 12),
+      size: img.Size,
+      created: img.Created,
+    }));
+    return { ok: true, images };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('image:prune', async () => {
   try {
     const { docker } = getDocker();
     const result = await docker.pruneImages();
     const reclaimed = result.SpaceReclaimed || 0;
-    return { ok: true, reclaimed };
+    const deleted = (result.ImagesDeleted || []).filter((d) => d.Deleted).length;
+    return { ok: true, reclaimed, deleted };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
@@ -359,6 +416,63 @@ ipcMain.handle('logs:start', async (event, id) => {
 
 ipcMain.handle('logs:stop', async () => {
   stopActiveLogStream();
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// IPC: combined Compose logs — stream every service in a project at once,
+// tagging each chunk with its service name so the renderer can interleave them
+// like `docker compose logs -f`.
+// ---------------------------------------------------------------------------
+let activeComposeStreams = [];
+
+function stopComposeStreams() {
+  for (const s of activeComposeStreams) {
+    try { s.destroy(); } catch (_) { /* noop */ }
+  }
+  activeComposeStreams = [];
+}
+
+ipcMain.handle('logs:startCompose', async (event, services) => {
+  try {
+    stopComposeStreams();
+    const { docker } = getDocker();
+    const send = (channel, payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
+    };
+
+    for (const svc of services || []) {
+      try {
+        const container = docker.getContainer(svc.id);
+        const info = await container.inspect();
+        const hasTty = info && info.Config && info.Config.Tty;
+        const logStream = await container.logs({
+          follow: true, stdout: true, stderr: true, tail: 200, timestamps: false,
+        });
+        activeComposeStreams.push(logStream);
+
+        if (hasTty) {
+          logStream.on('data', (c) => send('logs:composeData', { service: svc.service, line: c.toString('utf8'), stream: 'stdout' }));
+        } else {
+          const out = new PassThrough();
+          const err = new PassThrough();
+          out.on('data', (c) => send('logs:composeData', { service: svc.service, line: c.toString('utf8'), stream: 'stdout' }));
+          err.on('data', (c) => send('logs:composeData', { service: svc.service, line: c.toString('utf8'), stream: 'stderr' }));
+          container.modem.demuxStream(logStream, out, err);
+        }
+        logStream.on('error', () => { /* a single service ending shouldn't kill the rest */ });
+      } catch (e) {
+        send('logs:composeData', { service: svc.service, line: `[failed to attach: ${e.message}]\n`, stream: 'stderr' });
+      }
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('logs:stopCompose', async () => {
+  stopComposeStreams();
   return { ok: true };
 });
 
@@ -564,6 +678,7 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   stopActiveLogStream();
   stopActiveExecStream();
+  stopComposeStreams();
   stopEventStream();
   if (process.platform !== 'darwin') app.quit();
 });
