@@ -101,7 +101,7 @@ html, body {
   cursor: pointer;
 }
 .theme-select:focus { outline: 1px solid var(--blue); }
-.brand .logo { width: 24px; height: 24px; border-radius: 5px; }
+.brand .logo { width: auto; height: 30px; object-fit: contain; }
 
 .colima-card {
   background: var(--panel-2);
@@ -238,6 +238,13 @@ table.grid th {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   position: relative; user-select: none;
 }
+table.grid th.sortable { cursor: pointer; padding-right: 16px; }
+table.grid th.sortable:hover { color: var(--text); }
+table.grid th.sort-asc::after, table.grid th.sort-desc::after {
+  content: '▲'; position: absolute; right: 12px; top: 50%;
+  transform: translateY(-50%); font-size: 8px; color: var(--blue);
+}
+table.grid th.sort-desc::after { content: '▼'; }
 table.grid td { padding: 9px 10px; vertical-align: middle; }
 table.grid tr:hover td { background: var(--hover-bg); }
 td.col-status { padding-right: 4px; }

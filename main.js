@@ -661,7 +661,7 @@ function createWindow() {
     resizable: true,
     maximizable: true,
     fullscreenable: true,
-    title: 'Colima GUI',
+    title: 'Colima Desktop',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     backgroundColor: '#1e1e1e',
     webPreferences: {

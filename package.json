@@ -13,7 +13,7 @@
   "license": "MIT",
   "build": {
     "appId": "com.colima-gui.app",
-    "productName": "Colima GUI",
+    "productName": "Colima Desktop",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
@@ -28,6 +28,7 @@
       "renderer/**/*",
       "assets/icon.png",
       "assets/icon.icns",
+      "assets/brand-logo.png",
       "node_modules/**/*"
     ]
   },

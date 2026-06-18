@@ -42,6 +42,12 @@ const state = {
   statsTimers: new Map(),
 };
 
+// Container ids with an action in flight → verb ('stopping…' etc). Honored by
+// every render so the spinner survives event-driven refreshes that rebuild the
+// row mid-action; cleared only when the Docker call actually resolves.
+const pendingActions = new Map();
+const ACTION_VERB = { start: 'starting…', stop: 'stopping…', restart: 'restarting…' };
+
 function showError(msg) {
   const el = $('#global-error');
   if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
@@ -253,16 +259,23 @@ async function refreshContainers() {
 
   for (const c of res.containers) {
     const running = c.state === 'running';
+    const pending = pendingActions.get(c.id);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><span class="dot ${running ? 'dot-running' : 'dot-stopped'}"></span>${c.state}</td>
       <td class="col-name" title="${escapeHtml(c.name)}">${escapeHtml(c.name)}</td>
       <td class="mono col-image" title="${escapeHtml(c.image)}">${escapeHtml(c.image)}</td>
-      <td class="stats-cell col-stats" data-stats-id="${c.id}">${running ? statsMarkup('…', '…', 'muted') : '—'}</td>
+      <td class="stats-cell col-stats" data-stats-id="${c.id}">${running && !pending ? statsMarkup('…', '…', 'muted') : '—'}</td>
       <td class="ports col-ports" title="${c.ports.join('\n') || ''}">${c.ports.join('<br>') || '—'}</td>
-      <td class="muted col-status">${escapeHtml(c.status)}</td>
+      <td class="muted col-status">${pending ? `<span class="svc-pending">${pending}</span>` : escapeHtml(c.status)}</td>
       <td class="col-actions"><div class="actions"></div></td>`;
     const actions = tr.querySelector('.actions');
+
+    if (pending) {
+      actions.innerHTML = '<span class="row-spinner"></span>';
+      body.appendChild(tr);
+      continue;
+    }
 
     if (running) {
       actions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => act('stop', c.id)));
@@ -284,6 +297,7 @@ async function refreshContainers() {
       state.statsTimers.set(c.id, setInterval(() => fetchStats(c.id), getStatsInterval()));
     }
   }
+  applySort('containers-table');
   applyFilter();
 }
 
@@ -352,9 +366,28 @@ async function showRunCommand(id) {
 }
 
 async function act(action, id) {
-  const res = await window.api.container[action](id);
-  if (!res.ok) showError(res.error);
-  await refreshContainers();
+  pendingActions.set(id, ACTION_VERB[action] || 'working…');
+  markRowPending('containers-body', id);
+  try {
+    const res = await window.api.container[action](id);
+    if (!res.ok) showError(res.error);
+  } finally {
+    pendingActions.delete(id);
+    await refreshContainers();
+  }
+}
+
+// Immediately swap a row into its spinner state without a full re-fetch, so the
+// click feels instant even before the action resolves.
+function markRowPending(bodyId, id) {
+  const tr = document.querySelector(`#${bodyId} tr[data-svc-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`)
+    || [...document.querySelectorAll(`#${bodyId} tr`)].find((r) => r.querySelector(`[data-stats-id="${id}"]`));
+  if (!tr) return;
+  const verb = pendingActions.get(id);
+  const actions = tr.querySelector('.actions');
+  if (actions) actions.innerHTML = '<span class="row-spinner"></span>';
+  const status = tr.querySelector('.col-status, .compose-svc-status');
+  if (status && verb) status.innerHTML = `<span class="svc-pending">${verb}</span>`;
 }
 
 async function removeContainer(id, name) {
@@ -391,6 +424,7 @@ async function refreshImages() {
       body.appendChild(tr);
     }
   }
+  applySort('images-table');
   applyFilter();
 }
 
@@ -486,6 +520,7 @@ async function refreshVolumes() {
     ]));
     body.appendChild(tr);
   }
+  applySort('volumes-table');
   applyFilter();
 }
 
@@ -576,9 +611,17 @@ async function refreshCompose() {
 
     const headerActions = header.querySelector('.compose-actions');
     headerActions.appendChild(mkBtn('Logs', 'btn btn-ghost btn-sm', () => openComposeLogs(project, services)));
-    headerActions.appendChild(mkBtn('Start', 'btn btn-green btn-sm', () => composeBulk(services, 'start')));
-    headerActions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => composeBulk(services, 'stop')));
-    headerActions.appendChild(mkBtn('Restart', 'btn btn-ghost btn-sm', () => composeBulk(services, 'restart')));
+    // Disable actions that have nothing to act on: Start when all running,
+    // Stop/Restart when none running. Partial projects keep everything.
+    const startBtn = mkBtn('Start', 'btn btn-green btn-sm', () => composeBulk(services, 'start'));
+    startBtn.disabled = allRunning;
+    const stopBtn = mkBtn('Stop', 'btn btn-red btn-sm', () => composeBulk(services, 'stop'));
+    stopBtn.disabled = runningCount === 0;
+    const restartBtn = mkBtn('Restart', 'btn btn-ghost btn-sm', () => composeBulk(services, 'restart'));
+    restartBtn.disabled = runningCount === 0;
+    headerActions.appendChild(startBtn);
+    headerActions.appendChild(stopBtn);
+    headerActions.appendChild(restartBtn);
 
     header.querySelector('.compose-header-left').addEventListener('click', (e) => {
       // ignore clicks on action buttons
@@ -598,16 +641,18 @@ async function refreshCompose() {
       const tbody = table.querySelector('tbody');
       for (const c of services) {
         const running = c.state === 'running';
+        const pending = pendingActions.get(c.id);
         const tr = document.createElement('tr');
         tr.dataset.svcId = c.id;
         tr.innerHTML = `
-          <td class="compose-svc-state"><span class="dot ${running ? 'dot-running' : 'dot-stopped'}"></span></td>
+          <td class="compose-svc-state">${pending ? '<span class="row-spinner"></span>' : `<span class="dot ${running ? 'dot-running' : 'dot-stopped'}"></span>`}</td>
           <td class="compose-svc-name">${escapeHtml(c.composeService || c.name)}</td>
           <td class="mono muted compose-svc-image" title="${escapeHtml(c.image)}">${escapeHtml(c.image)}</td>
           <td class="ports compose-svc-ports">${c.ports.join(', ') || '—'}</td>
-          <td class="muted compose-svc-status">${escapeHtml(c.status)}</td>
+          <td class="muted compose-svc-status">${pending ? `<span class="svc-pending">${pending}</span>` : escapeHtml(c.status)}</td>
           <td class="col-actions"><div class="actions"></div></td>`;
         const actions = tr.querySelector('.actions');
+        if (pending) { tbody.appendChild(tr); continue; }
         if (running) {
           actions.appendChild(mkBtn('Stop', 'btn btn-red btn-sm', () => composeSvcAction('stop', c.id)));
           actions.appendChild(mkBtn('Restart', 'btn btn-ghost btn-sm', () => composeSvcAction('restart', c.id)));
@@ -629,25 +674,16 @@ async function refreshCompose() {
   applyFilter();
 }
 
-const ACTION_VERB = { start: 'starting…', stop: 'stopping…', restart: 'restarting…' };
-
-// Mark a service row as in-progress: spinner in the state cell, verb in the
-// status cell, action buttons disabled. The next refreshCompose() repaints it.
-function setComposePending(id, verb) {
-  const tr = document.querySelector(`#compose-body tr[data-svc-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`);
-  if (!tr) return;
-  const stateCell = tr.querySelector('.compose-svc-state');
-  if (stateCell) stateCell.innerHTML = '<span class="row-spinner"></span>';
-  const statusCell = tr.querySelector('.compose-svc-status');
-  if (statusCell) { statusCell.textContent = verb; statusCell.classList.add('svc-pending'); }
-  tr.querySelectorAll('.actions button').forEach((b) => { b.disabled = true; });
-}
-
 async function composeSvcAction(action, id) {
-  setComposePending(id, ACTION_VERB[action] || 'working…');
-  const res = await window.api.container[action](id);
-  if (!res.ok) showError(res.error);
-  await refreshCompose();
+  pendingActions.set(id, ACTION_VERB[action] || 'working…');
+  markRowPending('compose-body', id);
+  try {
+    const res = await window.api.container[action](id);
+    if (!res.ok) showError(res.error);
+  } finally {
+    pendingActions.delete(id);
+    await refreshCompose();
+  }
 }
 
 async function composeBulk(services, action) {
@@ -657,11 +693,16 @@ async function composeBulk(services, action) {
     return true; // restart all
   });
   const verb = ACTION_VERB[action] || 'working…';
-  // Show every affected row as pending up front, then fire concurrently.
-  targets.forEach((c) => setComposePending(c.id, verb));
+  // Mark every affected row pending up front (survives event refreshes), then
+  // fire concurrently and clear each as it resolves.
+  targets.forEach((c) => { pendingActions.set(c.id, verb); markRowPending('compose-body', c.id); });
   await Promise.all(targets.map(async (c) => {
-    const res = await window.api.container[action](c.id);
-    if (!res.ok) showError(res.error);
+    try {
+      const res = await window.api.container[action](c.id);
+      if (!res.ok) showError(res.error);
+    } finally {
+      pendingActions.delete(c.id);
+    }
   }));
   await refreshCompose();
 }
@@ -696,6 +737,7 @@ async function refreshNetworks() {
     actions.appendChild(mkContextMenu(menuItems));
     body.appendChild(tr);
   }
+  applySort('networks-table');
   applyFilter();
 }
 
@@ -792,6 +834,7 @@ async function openLogs(id, name) {
   state.currentLogId = id;
   $('#logs-title').textContent = `Logs · ${name}`;
   $('#logs-drawer').classList.remove('hidden');
+  syncDrawerLayout();
 
   ensureLogsTerm();
   logsTerm.options.theme = termTheme();
@@ -833,6 +876,17 @@ function fitLogs() {
   if (logsFit && logsTerm && !$('#logs-drawer').classList.contains('hidden')) {
     try { logsFit.fit(); } catch (_) { /* noop */ }
   }
+  syncDrawerLayout();
+}
+
+// Reserve space at the bottom of the scrollable main area equal to the drawer
+// height, so the table can scroll clear of the (fixed-position) logs drawer
+// instead of being hidden behind it.
+function syncDrawerLayout() {
+  const drawer = $('#logs-drawer');
+  const main = $('#main');
+  if (!main) return;
+  main.style.paddingBottom = drawer.classList.contains('hidden') ? '' : `${drawer.offsetHeight}px`;
 }
 
 function closeLogsStream() {
@@ -886,6 +940,7 @@ async function prepLogDrawer(title) {
   closeLogsStream();
   $('#logs-title').textContent = title;
   $('#logs-drawer').classList.remove('hidden');
+  syncDrawerLayout();
   ensureLogsTerm();
   logsTerm.options.theme = termTheme();
   logsTerm.reset();
@@ -1231,9 +1286,17 @@ function mkBtn(label, cls, onClick) {
     b.textContent = label;
   }
   b.addEventListener('click', async () => {
+    // Lock the whole row's action group while this action runs, so you can't
+    // fire a conflicting op (e.g. Restart mid-Stop) on the same resource.
+    const group = b.closest('.actions, .compose-actions');
+    const siblings = group ? Array.from(group.querySelectorAll('button')) : [];
     b.classList.add('loading');
+    siblings.forEach((s) => { if (s !== b) s.disabled = true; });
     try { await onClick(); }
-    finally { b.classList.remove('loading'); }
+    finally {
+      b.classList.remove('loading');
+      siblings.forEach((s) => { s.disabled = false; });
+    }
   });
   return b;
 }
@@ -1372,6 +1435,79 @@ function applyFilter() {
 }
 $('#filter-input').addEventListener('input', applyFilter);
 
+// --------------------------------------------------------------------------
+// Sortable tables — click a header to sort; click again to reverse. Sort state
+// persists and is re-applied after each refresh (rows are rebuilt on refresh).
+// Column type per table; null = not sortable (stats/ports/actions).
+// --------------------------------------------------------------------------
+const SORT_COLS = {
+  'containers-table': ['text', 'text', 'text', null, null, 'text', null],
+  'images-table': ['text', 'text', 'size', null],
+  'volumes-table': ['text', 'text', 'date', null],
+  'networks-table': ['text', 'text', 'text', 'text', 'num', null],
+};
+const sortState = {};
+
+function sizeToBytes(s) {
+  const m = String(s).match(/([\d.]+)\s*(B|KB|MB|GB|TB)/i);
+  if (!m) return 0;
+  const mult = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+  return (parseFloat(m[1]) || 0) * (mult[(m[2] || 'B').toUpperCase()] || 1);
+}
+
+function cellSortVal(tr, idx, type) {
+  const cell = tr.children[idx];
+  const t = cell ? cell.textContent.trim() : '';
+  if (type === 'size') return sizeToBytes(t);
+  if (type === 'num') return parseFloat(t) || 0;
+  if (type === 'date') return Date.parse(t) || 0;
+  return t.toLowerCase();
+}
+
+function applySort(tableId) {
+  const s = sortState[tableId];
+  if (!s) return;
+  const type = SORT_COLS[tableId][s.idx];
+  if (!type) return;
+  const tbody = document.querySelector(`#${tableId} tbody`);
+  if (!tbody) return;
+  const rows = Array.from(tbody.children);
+  rows.sort((a, b) => {
+    const av = cellSortVal(a, s.idx, type), bv = cellSortVal(b, s.idx, type);
+    const cmp = (typeof av === 'number') ? av - bv : String(av).localeCompare(String(bv));
+    return s.dir === 'desc' ? -cmp : cmp;
+  });
+  for (const r of rows) tbody.appendChild(r);
+}
+
+function updateSortIndicators(tableId) {
+  const ths = document.querySelectorAll(`#${tableId} thead th`);
+  const s = sortState[tableId];
+  ths.forEach((th, idx) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (s && s.idx === idx) th.classList.add(s.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+function initSortable() {
+  for (const tableId of Object.keys(SORT_COLS)) {
+    const ths = document.querySelectorAll(`#${tableId} thead th`);
+    ths.forEach((th, idx) => {
+      if (!SORT_COLS[tableId][idx]) return;
+      th.classList.add('sortable');
+      th.addEventListener('click', (e) => {
+        if (e.target.closest('.col-resizer')) return; // don't sort while resizing
+        const cur = sortState[tableId];
+        const dir = (cur && cur.idx === idx && cur.dir === 'asc') ? 'desc' : 'asc';
+        sortState[tableId] = { idx, dir };
+        updateSortIndicators(tableId);
+        applySort(tableId);
+        applyFilter();
+      });
+    });
+  }
+}
+
 // Events
 $$('.nav-item[data-tab]').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 $('#btn-refresh').addEventListener('click', refreshActive);
@@ -1394,6 +1530,7 @@ if (localStorage.getItem('sidebar-expanded') === '1') {
 $('#logs-close').addEventListener('click', () => {
   closeLogsStream();
   $('#logs-drawer').classList.add('hidden');
+  syncDrawerLayout();
 });
 $('#logs-clear').addEventListener('click', clearLogs);
 $('#btn-colima-logs').addEventListener('click', viewColimaLogs);
@@ -1428,5 +1565,6 @@ makeResizable('containers-table', 'col-widths-containers', [10, 14, 18, 14, 12, 
 makeResizable('images-table', 'col-widths-images', [40, 20, 15, 25]);
 makeResizable('volumes-table', 'col-widths-volumes', [50, 15, 20, 15]);
 makeResizable('networks-table', 'col-widths-networks', [28, 14, 12, 22, 12, 12]);
+initSortable();
 refreshActive();
 setInterval(() => refreshColima(), 15000);
