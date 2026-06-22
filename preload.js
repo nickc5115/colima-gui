@@ -53,12 +53,14 @@ contextBridge.exposeInMainWorld('api', {
     inspect: (name) => ipcRenderer.invoke('volume:inspect', name),
     remove: (name) => ipcRenderer.invoke('volume:remove', name),
     prune: () => ipcRenderer.invoke('volume:prune'),
+    listPrunable: () => ipcRenderer.invoke('volume:listPrunable'),
   },
   network: {
     list: () => ipcRenderer.invoke('docker:networks'),
     inspect: (id) => ipcRenderer.invoke('network:inspect', id),
     remove: (id) => ipcRenderer.invoke('network:remove', id),
     prune: () => ipcRenderer.invoke('network:prune'),
+    listPrunable: () => ipcRenderer.invoke('network:listPrunable'),
   },
   logs: {
     start: (id) => ipcRenderer.invoke('logs:start', id),
