@@ -447,42 +447,62 @@ function flashSuccess(msg) {
 }
 
 // Show exactly which dangling images a prune would remove, then confirm.
+// Generic prune preview: shows exactly what would be removed, then runs onConfirm.
+// rows: array of arrays of {text, cls}. Empty rows → show emptyText, hide Remove.
+let pruneConfirmHandler = null;
+function showPrunePreview({ title, summary, emptyText, rows, totalLabel, confirmLabel, onConfirm }) {
+  $('#prune-title').textContent = title;
+  const list = $('#prune-list');
+  const confirmBtn = $('#prune-confirm');
+  if (!rows.length) {
+    $('#prune-summary').textContent = emptyText;
+    list.innerHTML = '';
+    $('#prune-total').textContent = '';
+    confirmBtn.classList.add('hidden');
+  } else {
+    $('#prune-summary').textContent = summary;
+    list.innerHTML = rows.map((cols) =>
+      `<div class="prune-row">${cols.map((c) => `<span class="${c.cls || ''}">${c.text}</span>`).join('')}</div>`
+    ).join('');
+    $('#prune-total').textContent = totalLabel || '';
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = confirmLabel;
+  }
+  pruneConfirmHandler = onConfirm;
+  $('#prune-overlay').classList.remove('hidden');
+}
+
+function closePruneModal() { $('#prune-overlay').classList.add('hidden'); pruneConfirmHandler = null; }
+
+async function confirmPrune() {
+  const handler = pruneConfirmHandler;
+  closePruneModal();
+  if (handler) await handler();
+}
+
 async function pruneImages() {
   const res = await window.api.image.listDangling();
   if (!res.ok) { showError(res.error); return; }
   const imgs = res.images;
-  const list = $('#prune-list');
   const totalBytes = imgs.reduce((sum, i) => sum + (i.size || 0), 0);
-
-  if (!imgs.length) {
-    $('#prune-summary').textContent = 'No dangling images to remove.';
-    list.innerHTML = '';
-    $('#prune-total').textContent = '';
-    $('#prune-confirm').classList.add('hidden');
-  } else {
-    $('#prune-summary').textContent = `${imgs.length} dangling image${imgs.length === 1 ? '' : 's'} will be removed (untagged <none> layers). Tagged images are kept.`;
-    list.innerHTML = imgs.map((i) => `
-      <div class="prune-row">
-        <span class="mono">${i.id}</span>
-        <span class="muted mono">&lt;none&gt;</span>
-        <span class="muted">${humanSize(i.size)}</span>
-      </div>`).join('');
-    $('#prune-total').textContent = `Reclaims ~${humanSize(totalBytes)}`;
-    const confirmBtn = $('#prune-confirm');
-    confirmBtn.classList.remove('hidden');
-    confirmBtn.textContent = `Remove ${imgs.length} image${imgs.length === 1 ? '' : 's'}`;
-  }
-  $('#prune-overlay').classList.remove('hidden');
-}
-
-function closePruneModal() { $('#prune-overlay').classList.add('hidden'); }
-
-async function confirmPrune() {
-  closePruneModal();
-  const res = await window.api.image.prune();
-  if (!res.ok) { showError(res.error); return; }
-  flashSuccess(`Pruned ${res.deleted || 0} image${res.deleted === 1 ? '' : 's'} — reclaimed ${humanSize(res.reclaimed)}`);
-  await refreshImages();
+  showPrunePreview({
+    title: 'Prune dangling images',
+    emptyText: 'No dangling images to remove.',
+    summary: `${imgs.length} dangling image${imgs.length === 1 ? '' : 's'} will be removed (untagged <none> layers). Tagged images are kept.`,
+    rows: imgs.map((i) => [
+      { text: i.id, cls: 'mono' },
+      { text: '&lt;none&gt;', cls: 'muted mono' },
+      { text: humanSize(i.size), cls: 'muted' },
+    ]),
+    totalLabel: `Reclaims ~${humanSize(totalBytes)}`,
+    confirmLabel: `Remove ${imgs.length} image${imgs.length === 1 ? '' : 's'}`,
+    onConfirm: async () => {
+      const r = await window.api.image.prune();
+      if (!r.ok) { showError(r.error); return; }
+      flashSuccess(`Pruned ${r.deleted || 0} image${r.deleted === 1 ? '' : 's'} — reclaimed ${humanSize(r.reclaimed)}`);
+      await refreshImages();
+    },
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -528,7 +548,7 @@ async function inspectVolume(name) {
   const res = await window.api.volume.inspect(name);
   if (!res.ok) { showError(res.error); return; }
   const overlay = document.getElementById('command-overlay');
-  document.querySelector('.modal-title').textContent = `Volume — ${name}`;
+  document.querySelector('#command-overlay .modal-title').textContent = `Volume — ${name}`;
   document.getElementById('command-output').textContent = JSON.stringify(res.info, null, 2);
   overlay.classList.remove('hidden');
 }
@@ -541,22 +561,25 @@ async function removeVolume(name) {
 }
 
 async function pruneVolumes() {
-  if (!confirm('Remove all unused volumes? Data will be lost.')) return;
-  const res = await window.api.volume.prune();
+  const res = await window.api.volume.listPrunable();
   if (!res.ok) { showError(res.error); return; }
-  showError('');
-  const msg = `Pruned ${res.count} volume(s) — reclaimed ${humanSize(res.reclaimed)}`;
-  const el = $('#global-error');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-  el.style.borderColor = 'var(--green)';
-  el.style.background = 'rgba(46,160,67,0.12)';
-  el.style.color = '#7ee787';
-  setTimeout(() => {
-    el.classList.add('hidden');
-    el.removeAttribute('style');
-  }, 4000);
-  await refreshVolumes();
+  const vols = res.volumes;
+  showPrunePreview({
+    title: 'Prune unused volumes',
+    emptyText: 'No unused volumes to remove.',
+    summary: `${vols.length} unused volume${vols.length === 1 ? '' : 's'} will be removed (not used by any container). Data in them will be lost.`,
+    rows: vols.map((v) => [
+      { text: escapeHtml(v.name), cls: 'mono' },
+      { text: escapeHtml(v.driver), cls: 'muted' },
+    ]),
+    confirmLabel: `Remove ${vols.length} volume${vols.length === 1 ? '' : 's'}`,
+    onConfirm: async () => {
+      const r = await window.api.volume.prune();
+      if (!r.ok) { showError(r.error); return; }
+      flashSuccess(`Pruned ${r.count} volume(s) — reclaimed ${humanSize(r.reclaimed)}`);
+      await refreshVolumes();
+    },
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -745,7 +768,7 @@ async function inspectNetwork(id) {
   const res = await window.api.network.inspect(id);
   if (!res.ok) { showError(res.error); return; }
   const overlay = document.getElementById('command-overlay');
-  document.querySelector('.modal-title').textContent = `Network — ${res.info.Name}`;
+  document.querySelector('#command-overlay .modal-title').textContent = `Network — ${res.info.Name}`;
   document.getElementById('command-output').textContent = JSON.stringify(res.info, null, 2);
   overlay.classList.remove('hidden');
 }
@@ -758,18 +781,25 @@ async function removeNetwork(id, name) {
 }
 
 async function pruneNetworks() {
-  if (!confirm('Remove all unused networks?')) return;
-  const res = await window.api.network.prune();
+  const res = await window.api.network.listPrunable();
   if (!res.ok) { showError(res.error); return; }
-  showError('');
-  const el = $('#global-error');
-  el.textContent = `Pruned ${res.count} network(s)`;
-  el.classList.remove('hidden');
-  el.style.borderColor = 'var(--green)';
-  el.style.background = 'rgba(46,160,67,0.12)';
-  el.style.color = '#7ee787';
-  setTimeout(() => { el.classList.add('hidden'); el.removeAttribute('style'); }, 4000);
-  await refreshNetworks();
+  const nets = res.networks;
+  showPrunePreview({
+    title: 'Prune unused networks',
+    emptyText: 'No unused networks to remove.',
+    summary: `${nets.length} unused network${nets.length === 1 ? '' : 's'} will be removed (no connected containers). Built-in networks are kept.`,
+    rows: nets.map((n) => [
+      { text: escapeHtml(n.name), cls: 'mono' },
+      { text: escapeHtml(n.driver), cls: 'muted' },
+    ]),
+    confirmLabel: `Remove ${nets.length} network${nets.length === 1 ? '' : 's'}`,
+    onConfirm: async () => {
+      const r = await window.api.network.prune();
+      if (!r.ok) { showError(r.error); return; }
+      flashSuccess(`Pruned ${r.count} network(s)`);
+      await refreshNetworks();
+    },
+  });
 }
 
 // --------------------------------------------------------------------------

@@ -556,6 +556,17 @@ ipcMain.handle('volume:remove', async (_e, name) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Preview: volumes a prune would remove (those not used by any container).
+ipcMain.handle('volume:listPrunable', async () => {
+  try {
+    const { docker, socketPath } = getDocker();
+    if (!fs.existsSync(socketPath)) return { ok: false, error: 'Colima not running' };
+    const result = await docker.listVolumes({ filters: JSON.stringify({ dangling: ['true'] }) });
+    const volumes = (result.Volumes || []).map((v) => ({ name: v.Name, driver: v.Driver }));
+    return { ok: true, volumes };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('volume:prune', async () => {
   try {
     const { docker } = getDocker();
@@ -602,6 +613,28 @@ ipcMain.handle('network:remove', async (_e, id) => {
     const { docker } = getDocker();
     await docker.getNetwork(id).remove();
     return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Preview: networks a prune would remove — non-builtin local networks with no
+// connected containers. Inspect each to get an accurate container count.
+ipcMain.handle('network:listPrunable', async () => {
+  try {
+    const { docker, socketPath } = getDocker();
+    if (!fs.existsSync(socketPath)) return { ok: false, error: 'Colima not running' };
+    const list = await docker.listNetworks();
+    const out = [];
+    for (const n of list) {
+      if (['bridge', 'host', 'none'].includes(n.Name)) continue;
+      if (n.Scope && n.Scope !== 'local') continue;
+      let count = 0;
+      try {
+        const info = await docker.getNetwork(n.Id).inspect();
+        count = info.Containers ? Object.keys(info.Containers).length : 0;
+      } catch (_) { /* if inspect fails, assume in-use to be safe */ count = 1; }
+      if (count === 0) out.push({ id: n.Id.slice(0, 12), name: n.Name, driver: n.Driver });
+    }
+    return { ok: true, networks: out };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
