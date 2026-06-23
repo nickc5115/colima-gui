@@ -342,18 +342,45 @@ ipcMain.handle('exec:stop', async () => {
 // ---------------------------------------------------------------------------
 // IPC: container stats (one-shot)
 // ---------------------------------------------------------------------------
+function statNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 ipcMain.handle('container:stats', async (_e, id) => {
   try {
     const { docker } = getDocker();
     const container = docker.getContainer(id);
     const stats = await container.stats({ stream: false });
-    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
-    const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
-    const cpuCount = stats.cpu_stats.online_cpus || (stats.cpu_stats.cpu_usage.percpu_usage || []).length || 1;
-    const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * cpuCount * 100 : 0;
-    const memUsage = stats.memory_stats.usage - (stats.memory_stats.stats ? (stats.memory_stats.stats.cache || 0) : 0);
-    const memLimit = stats.memory_stats.limit;
-    return { ok: true, cpu: cpuPercent, cpuCount, memUsage, memLimit };
+    const snapshot = stats || {};
+    const cpuStats = snapshot.cpu_stats || {};
+    const preCpuStats = snapshot.precpu_stats || {};
+    const cpuUsage = cpuStats.cpu_usage || {};
+    const preCpuUsage = preCpuStats.cpu_usage || {};
+    const totalUsage = statNumber(cpuUsage.total_usage);
+    const preTotalUsage = statNumber(preCpuUsage.total_usage);
+    const systemUsage = statNumber(cpuStats.system_cpu_usage);
+    const preSystemUsage = statNumber(preCpuStats.system_cpu_usage);
+    const cpuCount = statNumber(cpuStats.online_cpus)
+      || (Array.isArray(cpuUsage.percpu_usage) ? cpuUsage.percpu_usage.length : 0)
+      || 1;
+
+    let cpuPercent = 0;
+    let warming = true;
+    if (totalUsage !== null && preTotalUsage !== null && systemUsage !== null && preSystemUsage !== null && preTotalUsage > 0 && preSystemUsage > 0) {
+      const cpuDelta = totalUsage - preTotalUsage;
+      const systemDelta = systemUsage - preSystemUsage;
+      cpuPercent = cpuDelta > 0 && systemDelta > 0 ? (cpuDelta / systemDelta) * cpuCount * 100 : 0;
+      warming = false;
+    }
+
+    const memoryStats = snapshot.memory_stats || {};
+    const memoryInnerStats = memoryStats.stats || {};
+    const memUsageRaw = statNumber(memoryStats.usage) || 0;
+    const memCache = statNumber(memoryInnerStats.cache) || 0;
+    const memUsage = Math.max(0, memUsageRaw - memCache);
+    const memLimit = statNumber(memoryStats.limit) || 0;
+    return { ok: true, cpu: cpuPercent, cpuCount, memUsage, memLimit, warming };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

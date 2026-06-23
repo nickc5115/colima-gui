@@ -39,6 +39,11 @@ const state = {
   composeLogUnsub: null,
   eventUnsub: null,
   eventEndUnsub: null,
+  eventReconnectTimer: null,
+  eventsDesired: false,
+  eventsStarting: false,
+  eventsActive: false,
+  eventGeneration: 0,
   statsTimers: new Map(),
 };
 
@@ -137,23 +142,87 @@ function makeResizable(tableId, storageKey, defaultWidths) {
 // --------------------------------------------------------------------------
 // Docker events — replaces polling
 // --------------------------------------------------------------------------
+function clearEventReconnectTimer() {
+  if (state.eventReconnectTimer) {
+    clearTimeout(state.eventReconnectTimer);
+    state.eventReconnectTimer = null;
+  }
+}
+
+function teardownEventListeners() {
+  if (state.eventUnsub) { state.eventUnsub(); state.eventUnsub = null; }
+  if (state.eventEndUnsub) { state.eventEndUnsub(); state.eventEndUnsub = null; }
+}
+
+function scheduleEventReconnect() {
+  if (!state.eventsDesired || state.eventReconnectTimer) return;
+  state.eventReconnectTimer = setTimeout(() => {
+    state.eventReconnectTimer = null;
+    startEventStream();
+  }, 3000);
+}
+
 function startEventStream() {
-  stopEventStream();
+  if (!state.eventsDesired || state.eventsStarting || state.eventsActive) return;
+  clearEventReconnectTimer();
+  teardownEventListeners();
+  const generation = ++state.eventGeneration;
+  state.eventsStarting = true;
+
   state.eventUnsub = window.api.events.onData((evt) => {
     if (evt.Type === 'container' || evt.Type === 'image') {
       refreshActive();
     }
   });
   state.eventEndUnsub = window.api.events.onEnd(() => {
-    setTimeout(() => startEventStream(), 3000);
+    if (generation !== state.eventGeneration) return;
+    teardownEventListeners();
+    state.eventsStarting = false;
+    state.eventsActive = false;
+    scheduleEventReconnect();
   });
-  window.api.events.start();
+
+  window.api.events.start()
+    .then((res) => {
+      if (generation !== state.eventGeneration) return;
+      state.eventsStarting = false;
+      if (!state.eventsDesired) { stopEventStream(); return; }
+      if (res && !res.ok) {
+        teardownEventListeners();
+        state.eventsActive = false;
+        scheduleEventReconnect();
+        return;
+      }
+      state.eventsActive = true;
+    })
+    .catch(() => {
+      if (generation !== state.eventGeneration) return;
+      teardownEventListeners();
+      state.eventsStarting = false;
+      state.eventsActive = false;
+      scheduleEventReconnect();
+    });
 }
 
 function stopEventStream() {
-  if (state.eventUnsub) { state.eventUnsub(); state.eventUnsub = null; }
-  if (state.eventEndUnsub) { state.eventEndUnsub(); state.eventEndUnsub = null; }
+  state.eventsDesired = false;
+  state.eventGeneration += 1;
+  clearEventReconnectTimer();
+  teardownEventListeners();
+  state.eventsStarting = false;
+  state.eventsActive = false;
   window.api.events.stop();
+}
+
+function syncEventStream(shouldRun) {
+  if (shouldRun) {
+    state.eventsDesired = true;
+    startEventStream();
+    return;
+  }
+  if (state.eventsDesired || state.eventsStarting || state.eventsActive || state.eventReconnectTimer || state.eventUnsub || state.eventEndUnsub) {
+    stopEventStream();
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -169,6 +238,7 @@ async function refreshColima() {
     statusEl.textContent = 'error';
     statusEl.className = 'status status-unknown';
     showError(res.error);
+    syncEventStream(false);
     return false;
   }
   showError('');
@@ -192,6 +262,7 @@ async function refreshColima() {
     statusEl.textContent = 'no profile';
     statusEl.className = 'status status-stopped';
     specsEl.textContent = '';
+    syncEventStream(false);
     return false;
   }
 
@@ -204,8 +275,7 @@ async function refreshColima() {
   $('#btn-colima-start').disabled = running;
   $('#btn-colima-stop').disabled = !running;
 
-  if (running) startEventStream();
-  else stopEventStream();
+  syncEventStream(running);
 
   return running;
 }
@@ -243,7 +313,8 @@ async function fetchStats(id) {
   if (!res.ok) { cell.innerHTML = statsMarkup('—', '—', 'muted'); return; }
   const normalize = localStorage.getItem('cpu-display') !== 'raw';
   const cpu = normalize ? res.cpu / (res.cpuCount || 1) : res.cpu;
-  cell.innerHTML = statsMarkup(`${cpu.toFixed(1)}%`, `${humanSize(res.memUsage)} / ${humanSize(res.memLimit)}`);
+  const cpuText = res.warming ? '…' : `${cpu.toFixed(1)}%`;
+  cell.innerHTML = statsMarkup(cpuText, `${humanSize(res.memUsage)} / ${humanSize(res.memLimit)}`, res.warming ? 'muted' : '');
 }
 
 async function refreshContainers() {
@@ -1383,8 +1454,8 @@ function mkContextMenu(items) {
     }
   });
 
-  document.body.appendChild(menu);
   wrap.appendChild(trigger);
+  wrap.appendChild(menu);
   return wrap;
 }
 
