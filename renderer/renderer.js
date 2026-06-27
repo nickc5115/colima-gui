@@ -37,6 +37,7 @@ const state = {
   currentLogId: null,
   colimaLogUnsub: null,
   composeLogUnsub: null,
+  composeEndUnsub: null,
   eventUnsub: null,
   eventEndUnsub: null,
   eventReconnectTimer: null,
@@ -53,11 +54,34 @@ const state = {
 const pendingActions = new Map();
 const ACTION_VERB = { start: 'starting…', stop: 'stopping…', restart: 'restarting…' };
 
-function showError(msg) {
+let toastTimer = null;
+function hideToast() {
   const el = $('#global-error');
-  if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
-  el.textContent = msg;
+  el.classList.add('hidden');
+  $('#global-error-text').textContent = '';
+  el.removeAttribute('style');
+  if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+}
+function showError(msg) {
+  if (!msg) { hideToast(); return; }
+  const el = $('#global-error');
+  el.removeAttribute('style'); // drop any leftover success styling
+  $('#global-error-text').textContent = msg;
   el.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 8000);
+}
+
+// Blocking error dialog the user must acknowledge — used for failures of an
+// explicit user action (remove/prune), where a transient toast is too easy to miss.
+function showAlert(msg, title = 'Error') {
+  $('#alert-title').textContent = title;
+  $('#alert-message').textContent = msg;
+  $('#alert-overlay').classList.remove('hidden');
+  $('#alert-ok').focus();
+}
+function closeAlert() {
+  $('#alert-overlay').classList.add('hidden');
 }
 
 function humanSize(bytes) {
@@ -172,6 +196,15 @@ function startEventStream() {
   state.eventUnsub = window.api.events.onData((evt) => {
     if (evt.Type === 'container' || evt.Type === 'image') {
       refreshActive();
+    }
+    // Authoritative stop-detection for the open log drawer: a genuine container
+    // stop arrives here even if the log follow-stream already died on its own.
+    if (evt.Type === 'container' && state.currentLogId) {
+      const evtId = evt.id || (evt.Actor && evt.Actor.ID) || '';
+      const action = evt.Action || evt.status || '';
+      if (evtId.slice(0, 12) === state.currentLogId.slice(0, 12) && /^(die|stop|kill)/.test(action)) {
+        markLogsStopped('container stopped — showing final logs');
+      }
     }
   });
   state.eventEndUnsub = window.api.events.onEnd(() => {
@@ -464,7 +497,9 @@ function markRowPending(bodyId, id) {
 async function removeContainer(id, name) {
   if (!confirm(`Remove container "${name}"? This cannot be undone.`)) return;
   const res = await window.api.container.remove(id, true);
-  if (!res.ok) showError(res.error);
+  // On failure nothing changed; show a modal the user must dismiss and skip the
+  // refresh (which would otherwise clear any toast).
+  if (!res.ok) { showAlert(res.error, 'Could not remove container'); return; }
   await refreshContainers();
 }
 
@@ -502,19 +537,19 @@ async function refreshImages() {
 async function removeImage(id, tag) {
   if (!confirm(`Remove image "${tag}"?`)) return;
   const res = await window.api.image.remove(id, true);
-  if (!res.ok) showError(res.error);
+  if (!res.ok) { showAlert(res.error, 'Could not remove image'); return; }
   await refreshImages();
 }
 
 function flashSuccess(msg) {
-  showError('');
   const el = $('#global-error');
-  el.textContent = msg;
+  $('#global-error-text').textContent = msg;
   el.classList.remove('hidden');
   el.style.borderColor = 'var(--green)';
   el.style.background = 'rgba(46,160,67,0.12)';
   el.style.color = '#7ee787';
-  setTimeout(() => { el.classList.add('hidden'); el.removeAttribute('style'); }, 4000);
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 4000);
 }
 
 // Show exactly which dangling images a prune would remove, then confirm.
@@ -627,7 +662,7 @@ async function inspectVolume(name) {
 async function removeVolume(name) {
   if (!confirm(`Remove volume "${name}"? Data will be lost.`)) return;
   const res = await window.api.volume.remove(name);
-  if (!res.ok) showError(res.error);
+  if (!res.ok) { showAlert(res.error, 'Could not remove volume'); return; }
   await refreshVolumes();
 }
 
@@ -847,7 +882,7 @@ async function inspectNetwork(id) {
 async function removeNetwork(id, name) {
   if (!confirm(`Remove network "${name}"?`)) return;
   const res = await window.api.network.remove(id);
-  if (!res.ok) showError(res.error);
+  if (!res.ok) { showAlert(res.error, 'Could not remove network'); return; }
   await refreshNetworks();
 }
 
@@ -930,6 +965,36 @@ function colorizeLine(line, stream) {
   return out;
 }
 
+// Live/stopped indicator for the logs drawer, so a stopped container's stale
+// logs aren't mistaken for a running one.
+let logsEnded = false;
+
+function setLogsStatus(kind, text) {
+  const el = $('#logs-status');
+  const term = $('#logs-output');
+  el.classList.remove('hidden', 'live', 'stopped');
+  if (kind === 'hidden') { el.classList.add('hidden'); el.textContent = ''; term.classList.remove('ended'); return; }
+  if (kind === 'live') {
+    el.classList.add('live');
+    el.textContent = `● ${text || 'live'}`;
+    term.classList.remove('ended');
+  } else {
+    el.classList.add('stopped');
+    el.textContent = `■ ${text || 'stopped'}`;
+    term.classList.add('ended');
+  }
+}
+
+function markLogsStopped(banner) {
+  if (logsEnded) return;
+  logsEnded = true;
+  setLogsStatus('stopped');
+  if (logsTerm) {
+    logsTerm.write(`\r\n\x1b[1;31m─── ${banner} ───\x1b[0m\r\n`);
+    if ($('#logs-follow').checked) logsTerm.scrollToBottom();
+  }
+}
+
 async function openLogs(id, name) {
   closeLogsStream();
   state.currentLogId = id;
@@ -941,6 +1006,8 @@ async function openLogs(id, name) {
   logsTerm.options.theme = termTheme();
   logsTerm.reset();
   logsPartial = '';
+  logsEnded = false;
+  setLogsStatus('live');
   await new Promise((r) => requestAnimationFrame(r));
   try { logsFit.fit(); } catch (_) { /* noop */ }
 
@@ -949,11 +1016,18 @@ async function openLogs(id, name) {
     appendLog(p.line, p.stream);
   });
   state.endUnsub = window.api.logs.onEnd((p) => {
-    if (p.error) appendLog(`\n[stream ended: ${p.error}]\n`, 'stderr');
+    if (p.id && p.id !== state.currentLogId) return; // ignore other containers
+    if (p.running) {
+      // The log stream dropped but the container is still up — don't claim it
+      // stopped. A genuine stop is detected from the Docker events stream below.
+      setLogsStatus('live', 'live tail interrupted');
+      return;
+    }
+    markLogsStopped(p.error ? `stream error: ${p.error}` : 'container stopped — showing final logs');
   });
 
   const res = await window.api.logs.start(id);
-  if (!res.ok) appendLog(`[failed to attach logs: ${res.error}]\n`, 'stderr');
+  if (!res.ok) { appendLog(`[failed to attach logs: ${res.error}]\n`, 'stderr'); markLogsStopped('could not attach to logs'); }
 }
 
 function appendLog(text, stream) {
@@ -990,11 +1064,25 @@ function syncDrawerLayout() {
   main.style.paddingBottom = drawer.classList.contains('hidden') ? '' : `${drawer.offsetHeight}px`;
 }
 
+// Keep the drawer height within [MIN, 85% of viewport] so its top — and the
+// resize handle at that top — can never end up off-screen above the window.
+const DRAWER_MIN_H = 120;
+const DRAWER_MAX_RATIO = 0.85;
+function clampDrawerHeight() {
+  const drawer = $('#logs-drawer');
+  if (!drawer || drawer.classList.contains('hidden')) return;
+  const max = window.innerHeight * DRAWER_MAX_RATIO;
+  if (drawer.offsetHeight > max || drawer.offsetHeight < DRAWER_MIN_H) {
+    drawer.style.height = Math.max(DRAWER_MIN_H, Math.min(max, drawer.offsetHeight)) + 'px';
+  }
+}
+
 function closeLogsStream() {
   if (state.logUnsub) { state.logUnsub(); state.logUnsub = null; }
   if (state.endUnsub) { state.endUnsub(); state.endUnsub = null; }
   if (state.colimaLogUnsub) { state.colimaLogUnsub(); state.colimaLogUnsub = null; }
   if (state.composeLogUnsub) { state.composeLogUnsub(); state.composeLogUnsub = null; window.api.logs.stopCompose(); }
+  if (state.composeEndUnsub) { state.composeEndUnsub(); state.composeEndUnsub = null; }
   window.api.logs.stop();
   state.currentLogId = null;
 }
@@ -1026,12 +1114,32 @@ function appendComposeLog(service, text, stream) {
   if ($('#logs-follow').checked) logsTerm.scrollToBottom();
 }
 
+let composeLiveServices = new Set();
+
+function onComposeServiceEnd(service) {
+  if (!composeLiveServices.has(service)) return; // already-stopped service: ignore
+  composeLiveServices.delete(service);
+  if (logsTerm) {
+    const color = composeColorFor(service);
+    const label = (service.length > composePadWidth ? service.slice(0, composePadWidth) : service.padEnd(composePadWidth));
+    logsTerm.write(`${color}${label}\x1b[0m \x1b[90m|\x1b[0m \x1b[31m─ exited ─\x1b[0m\r\n`);
+    if ($('#logs-follow').checked) logsTerm.scrollToBottom();
+  }
+  if (composeLiveServices.size === 0) markLogsStopped('all services stopped');
+  else setLogsStatus('live', `${composeLiveServices.size} running`);
+}
+
 async function openComposeLogs(project, services) {
   composePartials = {};
   composePadWidth = Math.min(20, Math.max(...services.map((s) => (s.composeService || s.name).length), 6));
   await prepLogDrawer(`Compose · ${project}`);
+  logsEnded = false;
+  composeLiveServices = new Set(services.filter((s) => s.state === 'running').map((s) => s.composeService || s.name));
+  if (composeLiveServices.size) setLogsStatus('live', `${composeLiveServices.size} running`);
+  else markLogsStopped('no running services');
   const list = services.map((s) => ({ id: s.id, service: s.composeService || s.name }));
   state.composeLogUnsub = window.api.logs.onComposeData((p) => appendComposeLog(p.service, p.line, p.stream));
+  state.composeEndUnsub = window.api.logs.onComposeEnd((p) => onComposeServiceEnd(p.service));
   const res = await window.api.logs.startCompose(list);
   if (!res.ok) appendLog(`[failed to attach compose logs: ${res.error}]\n`, 'stderr');
 }
@@ -1046,6 +1154,8 @@ async function prepLogDrawer(title) {
   logsTerm.options.theme = termTheme();
   logsTerm.reset();
   logsPartial = '';
+  logsEnded = false;
+  setLogsStatus('hidden'); // compose overrides this; Colima logs leave it hidden
   await new Promise((r) => requestAnimationFrame(r));
   try { logsFit.fit(); } catch (_) { /* noop */ }
 }
@@ -1294,6 +1404,7 @@ $('#shell-select').addEventListener('change', () => {
 
 window.addEventListener('resize', () => {
   if (!$('#shell-overlay').classList.contains('hidden')) fitAndResize();
+  clampDrawerHeight();
   fitLogs();
 });
 
@@ -1321,11 +1432,15 @@ $('#config-save-only').addEventListener('click', async () => {
   const drawer = document.getElementById('logs-drawer');
   if (!handle || !drawer) return;
 
-  const MIN_H = 120;
-  const MAX_RATIO = 0.85;
+  const MIN_H = DRAWER_MIN_H;
+  const MAX_RATIO = DRAWER_MAX_RATIO;
 
-  const savedH = localStorage.getItem('drawer-height');
-  if (savedH) drawer.style.height = savedH + 'px';
+  // Clamp the restored height — a stale value saved while the window was larger
+  // (or a max-drag) would otherwise push the drawer top, and its resize handle,
+  // off-screen above the viewport, making resize impossible.
+  const clampH = (h) => Math.max(MIN_H, Math.min(window.innerHeight * MAX_RATIO, h));
+  const savedH = parseInt(localStorage.getItem('drawer-height'), 10);
+  if (Number.isFinite(savedH)) drawer.style.height = clampH(savedH) + 'px';
 
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -1612,6 +1727,13 @@ function initSortable() {
 // Events
 $$('.nav-item[data-tab]').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 $('#btn-refresh').addEventListener('click', refreshActive);
+$('#global-error-close').addEventListener('click', hideToast);
+$('#alert-ok').addEventListener('click', closeAlert);
+$('#alert-close').addEventListener('click', closeAlert);
+$('#alert-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeAlert(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#alert-overlay').classList.contains('hidden')) closeAlert();
+});
 $('#btn-prune').addEventListener('click', pruneImages);
 $('#prune-cancel').addEventListener('click', closePruneModal);
 $('#prune-close').addEventListener('click', closePruneModal);

@@ -82,6 +82,11 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('logs:composeData', handler);
       return () => ipcRenderer.removeListener('logs:composeData', handler);
     },
+    onComposeEnd: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('logs:composeEnd', handler);
+      return () => ipcRenderer.removeListener('logs:composeEnd', handler);
+    },
   },
   config: {
     read: (profile) => ipcRenderer.invoke('config:read', profile),

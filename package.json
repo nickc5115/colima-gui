@@ -1,6 +1,6 @@
 {
   "name": "colima-gui",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A minimal Docker-Desktop-style GUI for Colima",
   "main": "main.js",
   "scripts": {

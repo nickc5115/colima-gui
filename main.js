@@ -223,11 +223,32 @@ ipcMain.handle('container:remove', async (_e, id, force) => {
 // IPC: image actions
 // ---------------------------------------------------------------------------
 ipcMain.handle('image:remove', async (_e, id, force) => {
+  const { docker } = getDocker();
   try {
-    const { docker } = getDocker();
     await docker.getImage(id).remove({ force: !!force });
     return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
+  } catch (e) {
+    // Image-in-use conflicts return HTTP 409 with a daemon message that names the
+    // blocking container by ID. Resolve that to a name/state so the message is useful.
+    const raw = (e.json && e.json.message) || e.message || String(e);
+    if (e.statusCode === 409 || /image is being used|being used by|cannot be forced/i.test(raw)) {
+      const m = raw.match(/being used by (?:running|stopped) container ([0-9a-f]+)/i);
+      let detail = '';
+      if (m) {
+        try {
+          const info = await docker.getContainer(m[1]).inspect();
+          const name = (info.Name || '').replace(/^\//, '') || m[1].slice(0, 12);
+          const state = info.State && info.State.Running ? 'running' : 'stopped';
+          detail = ` It is in use by ${state} container "${name}". ` +
+            (state === 'running' ? 'Stop and remove that container first.' : 'Remove that container first.');
+        } catch {
+          detail = ` It is in use by container ${m[1].slice(0, 12)}. Remove that container first.`;
+        }
+      }
+      return { ok: false, error: `Cannot remove image — it is being used by a container.${detail}` };
+    }
+    return { ok: false, error: raw };
+  }
 });
 
 // Preview: the dangling images a prune would remove (untagged <none> layers).
@@ -432,8 +453,16 @@ ipcMain.handle('logs:start', async (event, id) => {
       container.modem.demuxStream(logStream, out, err);
     }
 
-    logStream.on('end', () => send('logs:end', { id }));
-    logStream.on('error', (e) => send('logs:end', { id, error: e.message }));
+    // The follow-stream can end/error for reasons unrelated to the container
+    // stopping (e.g. a daemon log-driver hiccup). Report the container's ACTUAL
+    // running state so the renderer doesn't mislabel a live container as stopped.
+    const sendEnd = (extra) => {
+      container.inspect()
+        .then((i) => send('logs:end', { id, running: !!(i.State && i.State.Running), ...extra }))
+        .catch(() => send('logs:end', { id, running: false, ...extra }));
+    };
+    logStream.on('end', () => sendEnd({}));
+    logStream.on('error', (e) => sendEnd({ error: e.message }));
 
     return { ok: true };
   } catch (e) {
@@ -487,9 +516,13 @@ ipcMain.handle('logs:startCompose', async (event, services) => {
           err.on('data', (c) => send('logs:composeData', { service: svc.service, line: c.toString('utf8'), stream: 'stderr' }));
           container.modem.demuxStream(logStream, out, err);
         }
-        logStream.on('error', () => { /* a single service ending shouldn't kill the rest */ });
+        // A service's stream ends when its container stops — tell the renderer
+        // so it can show the service (and eventually the whole project) as stopped.
+        logStream.on('end', () => send('logs:composeEnd', { service: svc.service }));
+        logStream.on('error', () => send('logs:composeEnd', { service: svc.service }));
       } catch (e) {
         send('logs:composeData', { service: svc.service, line: `[failed to attach: ${e.message}]\n`, stream: 'stderr' });
+        send('logs:composeEnd', { service: svc.service });
       }
     }
     return { ok: true };
