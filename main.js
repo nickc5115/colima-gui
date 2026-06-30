@@ -763,7 +763,12 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const rendererUrl = process.env.COLIMA_RENDERER_URL;
+  if (rendererUrl) {
+    win.loadURL(rendererUrl);
+  } else {
+    win.loadFile(path.join(__dirname, 'renderer-dist', 'index.html'));
+  }
 }
 
 app.whenReady().then(createWindow);

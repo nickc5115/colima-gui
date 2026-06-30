@@ -4,10 +4,15 @@
   "description": "A minimal Docker-Desktop-style GUI for Colima",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:mac:universal": "electron-builder --mac --universal"
+    "start": "npm run build:renderer && electron .",
+    "start:dev": "COLIMA_RENDERER_URL=http://127.0.0.1:5173 electron .",
+    "dev:renderer": "vite --config renderer/vite.config.ts --host 127.0.0.1",
+    "build:renderer": "vite build --config renderer/vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config renderer/vite.config.ts",
+    "dist": "npm run build:renderer && electron-builder",
+    "dist:mac": "npm run build:renderer && electron-builder --mac",
+    "dist:mac:universal": "npm run build:renderer && electron-builder --mac --universal"
   },
   "author": "",
   "license": "MIT",
@@ -25,7 +30,7 @@
     "files": [
       "main.js",
       "preload.js",
-      "renderer/**/*",
+      "renderer-dist/**/*",
       "assets/icon.png",
       "assets/icon.icns",
       "assets/brand-logo.png",
@@ -33,8 +38,14 @@
     ]
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.5",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "jsdom": "^27.0.1",
+    "preact": "^10.29.3",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.6"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

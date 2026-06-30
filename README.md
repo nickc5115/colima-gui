@@ -1,50 +1,57 @@
-# Colima GUI
+# Colima Desktop
 
-A minimal Docker-Desktop-style GUI for [Colima](https://github.com/abiosoft/colima).
-Electron + dockerode. Does the three things that actually matter day-to-day:
+Docker-Desktop-style GUI for [Colima](https://github.com/abiosoft/colima) on macOS.
 
-- View containers (all states) and images
-- Start / stop / restart containers
-- **Live-streaming container logs** (demux'd stdout/stderr, auto-scroll)
-- Start / stop the Colima VM, with status + specs
+Colima exposes the Docker Engine API over a unix socket at
+`~/.colima/<profile>/docker.sock`. Colima Desktop shells out to `colima` for VM
+lifecycle and uses `dockerode` against that socket for Docker resources.
 
-## How it works
+## Features
 
-Colima boots a Lima VM and exposes the **Docker Engine API** over a unix socket
-at `~/.colima/<profile>/docker.sock`. This app:
+- Start/stop Colima profiles and view persisted startup logs
+- View containers, images, volumes, Compose projects, and networks
+- Start/stop/restart/remove containers and Compose services
+- Live container and combined Compose logs with xterm.js rendering
+- Interactive container shell with xterm.js
+- CPU/memory stats, sortable/filterable tables, and resizable columns
+- Prune previews for dangling images, unused volumes, and unused networks
+- Inspect volumes/networks and copy an approximate `docker run` command
+- Edit Colima config with simple/advanced views
 
-- shells out to `colima list/start/stop` for VM lifecycle, and
-- talks to that socket via `dockerode` for everything container/image related.
-
-That's the whole trick — the container UI is identical to what you'd build
-against Docker Desktop, because it's the same API.
-
-## Run
+## Development
 
 ```bash
 npm install
 npm start
 ```
 
-Requires Colima installed (`brew install colima docker`) and a profile that has
-been started at least once (`colima start`).
+`npm start` builds the Preact renderer into `renderer-dist/` and launches
+Electron against that build.
 
-## Notes / known rough edges (v1)
+For Vite renderer development:
 
-- **Profiles:** hardcoded to `default`. The plumbing (`-p <profile>`) is there in
-  `main.js`; wiring a profile dropdown is a small renderer change.
-- **Single log stream:** one container's logs at a time, to keep state simple.
-- **Polling:** the list refreshes every 5s (paused while the logs drawer is open).
-  Swapping to Docker's `/events` stream would make it instant.
-- **PATH fix:** when launched from Finder (not a terminal), macOS apps don't inherit
-  your shell PATH, so `/opt/homebrew/bin` is prepended in `main.js` so `colima`
-  resolves. If yours lives elsewhere, adjust `BIN_PATH`.
-- **Socket override:** honors `DOCKER_HOST` if it's a `unix://` socket.
+```bash
+npm run dev:renderer
+COLIMA_RENDERER_URL=http://127.0.0.1:5173 npm run start:dev
+```
 
-## Obvious next features
+When verifying manually, be careful not to open the installed app from
+`/Applications`. The development Electron build has bundle id
+`com.github.Electron`; the installed app bundle id is `com.colima-gui.app`.
 
-- `docker /events` for live updates instead of polling
-- exec into a container (xterm.js + hijacked stream)
-- image pull / prune, container rm
-- stats (CPU/mem) via `/containers/{id}/stats`
-- package as a real `.app` with electron-builder
+## Scripts
+
+- `npm run build:renderer` — build the Preact/Vite renderer
+- `npm test` — run Vitest tests for renderer logic
+- `npm run dist:mac:universal` — build the universal macOS DMG
+
+## Architecture
+
+- `main.js` — Electron main process, Colima CLI calls, Docker API, IPC handlers
+- `preload.js` — context-isolated `window.api` bridge
+- `renderer/src` — Preact + TypeScript renderer
+- `renderer-dist` — generated renderer build consumed by Electron/package builds
+
+The renderer keeps xterm.js as imperative islands inside Preact components. Docker
+events drive table refresh and authoritative log stop detection; log stream
+failures alone do not mark running containers or Compose services as stopped.
