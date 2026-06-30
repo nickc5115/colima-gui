@@ -297,6 +297,33 @@ body.col-resizing * { user-select: none !important; }
 
 .mono { font-family: var(--mono); font-size: 12px; }
 .ports { font-family: var(--mono); font-size: 11px; color: var(--blue); white-space: normal !important; }
+.port-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.port-link,
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--blue);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.port-link {
+  cursor: pointer;
+}
+.port-link:hover {
+  border-color: var(--blue);
+  background: var(--hover-bg);
+}
 .actions { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
 .btn-icon { width: 14px; height: 14px; display: block; }
 .btn.loading { pointer-events: none; opacity: 0.6; position: relative; color: transparent !important; }
@@ -452,9 +479,10 @@ body.drawer-resizing * { user-select: none !important; }
   display: flex; justify-content: space-between; align-items: center;
   padding: 8px 12px; border-bottom: 1px solid var(--border);
   background: var(--panel);
+  gap: 12px;
 }
-.drawer-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
-#logs-title { font-family: var(--mono); font-size: 12px; }
+.drawer-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 140px; overflow: hidden; }
+#logs-title { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logs-status {
   font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
   white-space: nowrap; letter-spacing: 0.02em;
@@ -462,7 +490,27 @@ body.drawer-resizing * { user-select: none !important; }
 .logs-status.hidden { display: none; }
 .logs-status.live { background: var(--success-bg); color: var(--success-text); }
 .logs-status.stopped { background: var(--error-bg); color: var(--error-text); }
-.drawer-controls { display: flex; align-items: center; gap: 10px; }
+.drawer-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.drawer-filter,
+.drawer-select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  height: 28px;
+}
+.drawer-filter {
+  width: min(220px, 24vw);
+  min-width: 120px;
+  padding: 4px 8px;
+}
+.drawer-select {
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.drawer-filter:focus,
+.drawer-select:focus { outline: 1px solid var(--blue); border-color: var(--blue); }
 .follow { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 4px; }
 
 .logs-term {
@@ -502,6 +550,64 @@ body.drawer-resizing * { user-select: none !important; }
   line-height: 1.6; white-space: pre-wrap; word-break: break-all;
   max-height: 50vh; overflow: auto;
   user-select: all;
+}
+
+/* Container inspector */
+.inspect-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.inspect-tab {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.inspect-tab:hover,
+.inspect-tab.active {
+  color: var(--text);
+  border-color: var(--blue);
+  background: var(--panel-2);
+}
+.inspect-panel {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.inspect-rows {
+  display: grid;
+}
+.inspect-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 24%) minmax(0, 1fr);
+  border-bottom: 1px solid var(--border);
+}
+.inspect-row:last-child { border-bottom: none; }
+.inspect-key,
+.inspect-value {
+  padding: 8px 10px;
+  min-width: 0;
+}
+.inspect-key {
+  color: var(--muted);
+  background: var(--panel-2);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.inspect-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.compact-empty {
+  padding: 14px;
 }
 
 /* Config modal */

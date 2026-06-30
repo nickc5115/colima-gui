@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -21,6 +21,19 @@ const EXEC_ENV = { ...process.env, PATH: BIN_PATH };
 
 // Active profile (Colima default is "default"). Swappable from the UI later.
 let activeProfile = 'default';
+
+ipcMain.handle('system:openExternal', async (_e, url) => {
+  try {
+    const parsed = new URL(String(url));
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { ok: false, error: 'Only http/https URLs can be opened externally.' };
+    }
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 
 // One dockerode client per resolved socket path, cached.
 const dockerClients = new Map();

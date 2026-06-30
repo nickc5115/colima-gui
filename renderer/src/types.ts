@@ -104,6 +104,9 @@ export interface ColimaConfigRead {
 }
 
 export interface WindowApi {
+  system: {
+    openExternal: (url: string) => Promise<ApiResult>;
+  };
   colima: {
     list: () => Promise<ApiResult<{ profiles: ColimaProfile[] }>>;
     start: (profile: string) => Promise<ApiResult>;

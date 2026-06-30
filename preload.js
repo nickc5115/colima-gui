@@ -3,6 +3,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  system: {
+    openExternal: (url) => ipcRenderer.invoke('system:openExternal', url),
+  },
   colima: {
     list: () => ipcRenderer.invoke('colima:list'),
     start: (profile) => ipcRenderer.invoke('colima:start', profile),

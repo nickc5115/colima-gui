@@ -96,6 +96,7 @@ export function App() {
   const [toast, setToast] = useState<{ message: string; kind: 'error' | 'success' } | null>(null);
   const [alert, setAlert] = useState<{ title: string; message: string } | null>(null);
   const [command, setCommand] = useState<{ title: string; text: string } | null>(null);
+  const [inspector, setInspector] = useState<{ title: string; info: any } | null>(null);
   const [shell, setShell] = useState<{ id: string; name: string } | null>(null);
   const [prune, setPrune] = useState<{ title: string; summary: string; rows: string[][]; total?: string; confirm?: string; onConfirm?: () => Promise<void> } | null>(null);
   const [config, setConfig] = useState<{ raw: string; parsed: any; path: string; advanced: boolean; error?: string } | null>(null);
@@ -264,6 +265,17 @@ export function App() {
     setCommand({ title: 'Run Command', text: buildRunCommand(res.info) });
   };
 
+  const showInspector = async (id: string, name: string) => {
+    const res = await api.container.inspect(id);
+    if (!res.ok) { showError(res.error); return; }
+    setInspector({ title: `Inspect - ${name}`, info: res.info });
+  };
+
+  const openPort = async (hostPort: string) => {
+    const res = await api.system.openExternal(`http://localhost:${hostPort}`);
+    if (!res.ok) showError(res.error);
+  };
+
   const removeContainer = async (id: string, name: string) => {
     if (!confirm(`Remove container "${name}"? This cannot be undone.`)) return;
     const res = await api.container.remove(id, true);
@@ -418,7 +430,7 @@ export function App() {
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
       <main id="main">
         <div class="search-bar"><input class="filter-input" value={filter} onInput={(e) => setFilter((e.currentTarget as HTMLInputElement).value)} placeholder="Filter by name, image, or tag…" /></div>
-        {tab === 'containers' && <ContainersView containers={containers} pending={pending} stats={stats} filter={filter} onAction={containerAction} onRemove={removeContainer} onLogs={openLogs} onShell={setShell} onCommand={showRunCommand} />}
+        {tab === 'containers' && <ContainersView containers={containers} pending={pending} stats={stats} filter={filter} onAction={containerAction} onRemove={removeContainer} onLogs={openLogs} onShell={setShell} onCommand={showRunCommand} onInspect={showInspector} onOpenPort={openPort} />}
         {tab === 'images' && <ImagesView rows={imageRows} filter={filter} onRemove={async (id: string, tag: string) => {
           if (!confirm(`Remove image "${tag}"?`)) return;
           const res = await api.image.remove(id, true);
@@ -436,28 +448,58 @@ export function App() {
           const res = await api.volume.listPrunable(); if (!res.ok) { showError(res.error); return; }
           setPrune({ title: 'Prune unused volumes', summary: res.volumes.length ? `${res.volumes.length} unused volume(s) will be removed. Data in them will be lost.` : 'No unused volumes to remove.', rows: res.volumes.map((v) => [v.name, v.driver]), confirm: `Remove ${res.volumes.length} volume(s)`, onConfirm: async () => { const r = await api.volume.prune(); if (!r.ok) { showError(r.error); return; } flashSuccess(`Pruned ${r.count} volume(s) - reclaimed ${humanSize(r.reclaimed)}`); requestRefresh(); } });
         }} />}
-        {tab === 'compose' && <ComposeView projects={composeProjects} collapsed={composeCollapsed} pending={pending} filter={filter} onToggle={(p: string) => setComposeCollapsed((old) => { const next = new Set(old); next.has(p) ? next.delete(p) : next.add(p); localStorage.setItem('compose-collapsed', JSON.stringify([...next])); return next; })} onLogs={openComposeLogs} onSvcAction={(a: ActionName, id: string) => containerAction(a, id, true)} onBulk={async (services: ContainerSummary[], action: ActionName) => { const targets = services.filter((s: ContainerSummary) => action === 'start' ? s.state !== 'running' : action === 'stop' ? s.state === 'running' : true); await Promise.all(targets.map((s: ContainerSummary) => containerAction(action, s.id, true))); }} onShell={setShell} onCommand={showRunCommand} onContainerLogs={openLogs} />}
+        {tab === 'compose' && <ComposeView projects={composeProjects} collapsed={composeCollapsed} pending={pending} filter={filter} onToggle={(p: string) => setComposeCollapsed((old) => { const next = new Set(old); next.has(p) ? next.delete(p) : next.add(p); localStorage.setItem('compose-collapsed', JSON.stringify([...next])); return next; })} onLogs={openComposeLogs} onSvcAction={(a: ActionName, id: string) => containerAction(a, id, true)} onBulk={async (services: ContainerSummary[], action: ActionName) => { const targets = services.filter((s: ContainerSummary) => action === 'start' ? s.state !== 'running' : action === 'stop' ? s.state === 'running' : true); await Promise.all(targets.map((s: ContainerSummary) => containerAction(action, s.id, true))); }} onShell={setShell} onCommand={showRunCommand} onInspect={showInspector} onContainerLogs={openLogs} onOpenPort={openPort} />}
         {tab === 'networks' && <NetworksView networks={networks} filter={filter} onInspect={async (id: string) => { const res = await api.network.inspect(id); if (!res.ok) showError(res.error); else setCommand({ title: `Network - ${res.info.Name}`, text: JSON.stringify(res.info, null, 2) }); }} onRemove={async (id: string, name: string) => { if (!confirm(`Remove network "${name}"?`)) return; const res = await api.network.remove(id); if (!res.ok) { showAlert(res.error, 'Could not remove network'); return; } requestRefresh(); }} onPrune={async () => { const res = await api.network.listPrunable(); if (!res.ok) { showError(res.error); return; } setPrune({ title: 'Prune unused networks', summary: res.networks.length ? `${res.networks.length} unused network(s) will be removed.` : 'No unused networks to remove.', rows: res.networks.map((n) => [n.name, n.driver]), confirm: `Remove ${res.networks.length} network(s)`, onConfirm: async () => { const r = await api.network.prune(); if (!r.ok) { showError(r.error); return; } flashSuccess(`Pruned ${r.count} network(s)`); requestRefresh(); } }); }} />}
       </main>
       <LogsDrawer ref={logsRef} open={logsOpen} onOpenChange={setLogsOpen} onClose={() => setLogsOpen(false)} />
       <ShellModal container={shell} onClose={() => setShell(null)} />
       {alert && <AlertModal {...alert} onClose={() => setAlert(null)} />}
       {command && <CommandModal command={command} onClose={() => setCommand(null)} />}
+      {inspector && <ContainerInspectorModal inspector={inspector} onClose={() => setInspector(null)} />}
       {prune && <PruneModal prune={prune} onClose={() => setPrune(null)} />}
       {config && <ConfigModal config={config} onChange={setConfig} onClose={() => setConfig(null)} onSave={saveConfig} />}
     </div>
   );
 }
 
-function ContainersView({ containers, pending, stats, filter, onAction, onRemove, onLogs, onShell, onCommand }: any) {
+function parsePublishedPort(port: string) {
+  const match = port.match(/^(\d+):(\d+)\/([a-z0-9]+)$/i);
+  if (!match) return null;
+  return { hostPort: match[1], containerPort: match[2], protocol: match[3] };
+}
+
+function PortsCell({ ports, onOpenPort }: { ports: string[]; onOpenPort: (hostPort: string) => void }) {
+  if (!ports.length) return <span class="muted">—</span>;
+  const uniquePorts = [...new Set(ports)];
+  return (
+    <span class="port-list">
+      {uniquePorts.map((port) => {
+        const parsed = parsePublishedPort(port);
+        if (!parsed) return <span class="port-chip" key={port}>{port}</span>;
+        return (
+          <button
+            class="port-link"
+            key={port}
+            title={`Open http://localhost:${parsed.hostPort}`}
+            onClick={() => onOpenPort(parsed.hostPort)}
+          >
+            {parsed.hostPort}:{parsed.containerPort}/{parsed.protocol}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+function ContainersView({ containers, pending, stats, filter, onAction, onRemove, onLogs, onShell, onCommand, onInspect, onOpenPort }: any) {
   const columns: Column<ContainerSummary>[] = [
     { title: 'State', type: 'text', value: (c) => c.state, render: (c) => <><span class={`dot ${c.state === 'running' ? 'dot-running' : 'dot-stopped'}`} />{c.state}</> },
     { title: 'Name', type: 'text', className: 'col-name', value: (c) => c.name, render: (c) => c.name },
     { title: 'Image', type: 'text', className: 'mono col-image', value: (c) => c.image, render: (c) => c.image },
     { title: 'CPU / Mem', render: (c) => pending.has(c.id) ? <span class="row-spinner" /> : statMarkup(stats[c.id], c.state !== 'running') },
-    { title: 'Ports', render: (c) => c.ports.length ? c.ports.map((p) => <><span>{p}</span><br /></>) : '—' },
+    { title: 'Ports', render: (c) => <PortsCell ports={c.ports} onOpenPort={onOpenPort} /> },
     { title: 'Status', type: 'text', className: 'muted col-status', value: (c) => pending.get(c.id) || c.status, render: (c) => pending.get(c.id) ? <span class="svc-pending">{pending.get(c.id)}</span> : c.status },
-    { title: '', render: (c) => pending.has(c.id) ? <span class="row-spinner" /> : <div class="actions">{c.state === 'running' ? <><Button label="Stop" className="btn btn-red btn-sm" onClick={() => onAction('stop', c.id)} /><Button label="Restart" className="btn btn-ghost btn-sm" onClick={() => onAction('restart', c.id)} /></> : <><Button label="Start" className="btn btn-green btn-sm" onClick={() => onAction('start', c.id)} /><Button label="Remove" className="btn btn-red btn-sm" onClick={() => onRemove(c.id, c.name)} /></>}<ActionMenu items={[{ label: 'Logs', icon: 'logs', action: () => onLogs(c.id, c.name) }, ...(c.state === 'running' ? [{ label: 'Shell', icon: 'shell' as const, action: () => onShell({ id: c.id, name: c.name }) }] : []), { label: 'Copy docker run', icon: 'command', action: () => onCommand(c.id) }]} /></div> },
+    { title: '', render: (c) => pending.has(c.id) ? <span class="row-spinner" /> : <div class="actions">{c.state === 'running' ? <><Button label="Stop" className="btn btn-red btn-sm" onClick={() => onAction('stop', c.id)} /><Button label="Restart" className="btn btn-ghost btn-sm" onClick={() => onAction('restart', c.id)} /></> : <><Button label="Start" className="btn btn-green btn-sm" onClick={() => onAction('start', c.id)} /><Button label="Remove" className="btn btn-red btn-sm" onClick={() => onRemove(c.id, c.name)} /></>}<ActionMenu items={[{ label: 'Logs', icon: 'logs', action: () => onLogs(c.id, c.name) }, ...(c.state === 'running' ? [{ label: 'Shell', icon: 'shell' as const, action: () => onShell({ id: c.id, name: c.name }) }] : []), { label: 'Inspect', icon: 'command', action: () => onInspect(c.id, c.name) }, { label: 'Copy docker run', icon: 'command', action: () => onCommand(c.id) }]} /></div> },
   ];
   return <section class="view"><DataTable id="containers-table" rows={containers} columns={columns} empty="No containers." filter={filter} rowKey={(c) => c.id} /></section>;
 }
@@ -482,14 +524,14 @@ function VolumesView({ volumes, filter, onInspect, onRemove, onPrune }: any) {
   return <section class="view"><div class="view-toolbar"><button class="btn btn-ghost" onClick={onPrune}>Prune unused volumes</button></div><DataTable id="volumes-table" rows={volumes} columns={columns} empty="No volumes." filter={filter} rowKey={(v) => v.name} /></section>;
 }
 
-function ComposeView({ projects, collapsed, pending, filter, onToggle, onLogs, onSvcAction, onBulk, onShell, onCommand, onContainerLogs }: any) {
+function ComposeView({ projects, collapsed, pending, filter, onToggle, onLogs, onSvcAction, onBulk, onShell, onCommand, onInspect, onContainerLogs, onOpenPort }: any) {
   const entries = [...projects.entries()].filter(([project, services]) => !filter || `${project} ${JSON.stringify(services)}`.toLowerCase().includes(filter.toLowerCase()));
   if (!entries.length) return <section class="view"><div class="empty">No Compose projects found.<br /><span class="muted" style={{ fontSize: 11 }}>Containers started with <code>docker compose</code> appear here grouped by project.</span></div></section>;
   return <section class="view">{entries.map(([project, services]: [string, ContainerSummary[]]) => {
     const runningCount = services.filter((s) => s.state === 'running').length;
     const allRunning = runningCount === services.length;
     const isCollapsed = collapsed.has(project);
-    return <div class="compose-group" key={project}><div class="compose-header"><div class="compose-header-left" onClick={() => onToggle(project)}><svg class={`compose-caret ${isCollapsed ? 'collapsed' : ''}`} viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="compose-name">{project}</span><span class={`compose-badge ${allRunning ? 'badge-running' : runningCount ? 'badge-partial' : 'badge-stopped'}`}>{runningCount}/{services.length} running</span></div><div class="compose-actions"><Button label="Logs" className="btn btn-ghost btn-sm" onClick={() => onLogs(project, services)} /><Button label="Start" className="btn btn-green btn-sm" disabled={allRunning} onClick={() => onBulk(services, 'start')} /><Button label="Stop" className="btn btn-red btn-sm" disabled={runningCount === 0} onClick={() => onBulk(services, 'stop')} /><Button label="Restart" className="btn btn-ghost btn-sm" disabled={runningCount === 0} onClick={() => onBulk(services, 'restart')} /></div></div>{!isCollapsed && <table class="grid compose-services"><tbody>{services.map((c) => <tr key={c.id} data-svc-id={c.id}><td class="compose-svc-state">{pending.has(c.id) ? <span class="row-spinner" /> : <span class={`dot ${c.state === 'running' ? 'dot-running' : 'dot-stopped'}`} />}</td><td class="compose-svc-name">{c.composeService || c.name}</td><td class="mono muted compose-svc-image">{c.image}</td><td class="ports compose-svc-ports">{c.ports.join(', ') || '—'}</td><td class="muted compose-svc-status">{pending.get(c.id) || c.status}</td><td class="col-actions"><div class="actions">{c.state === 'running' ? <><Button label="Stop" className="btn btn-red btn-sm" onClick={() => onSvcAction('stop', c.id)} /><Button label="Restart" className="btn btn-ghost btn-sm" onClick={() => onSvcAction('restart', c.id)} /></> : <Button label="Start" className="btn btn-green btn-sm" onClick={() => onSvcAction('start', c.id)} />}<ActionMenu items={[{ label: 'Logs', icon: 'logs', action: () => onContainerLogs(c.id, c.name) }, ...(c.state === 'running' ? [{ label: 'Shell', icon: 'shell' as const, action: () => onShell({ id: c.id, name: c.name }) }] : []), { label: 'Copy docker run', icon: 'command', action: () => onCommand(c.id) }]} /></div></td></tr>)}</tbody></table>}</div>;
+    return <div class="compose-group" key={project}><div class="compose-header"><div class="compose-header-left" onClick={() => onToggle(project)}><svg class={`compose-caret ${isCollapsed ? 'collapsed' : ''}`} viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="compose-name">{project}</span><span class={`compose-badge ${allRunning ? 'badge-running' : runningCount ? 'badge-partial' : 'badge-stopped'}`}>{runningCount}/{services.length} running</span></div><div class="compose-actions"><Button label="Logs" className="btn btn-ghost btn-sm" onClick={() => onLogs(project, services)} /><Button label="Start" className="btn btn-green btn-sm" disabled={allRunning} onClick={() => onBulk(services, 'start')} /><Button label="Stop" className="btn btn-red btn-sm" disabled={runningCount === 0} onClick={() => onBulk(services, 'stop')} /><Button label="Restart" className="btn btn-ghost btn-sm" disabled={runningCount === 0} onClick={() => onBulk(services, 'restart')} /></div></div>{!isCollapsed && <table class="grid compose-services"><tbody>{services.map((c) => <tr key={c.id} data-svc-id={c.id}><td class="compose-svc-state">{pending.has(c.id) ? <span class="row-spinner" /> : <span class={`dot ${c.state === 'running' ? 'dot-running' : 'dot-stopped'}`} />}</td><td class="compose-svc-name">{c.composeService || c.name}</td><td class="mono muted compose-svc-image">{c.image}</td><td class="ports compose-svc-ports"><PortsCell ports={c.ports} onOpenPort={onOpenPort} /></td><td class="muted compose-svc-status">{pending.get(c.id) || c.status}</td><td class="col-actions"><div class="actions">{c.state === 'running' ? <><Button label="Stop" className="btn btn-red btn-sm" onClick={() => onSvcAction('stop', c.id)} /><Button label="Restart" className="btn btn-ghost btn-sm" onClick={() => onSvcAction('restart', c.id)} /></> : <Button label="Start" className="btn btn-green btn-sm" onClick={() => onSvcAction('start', c.id)} />}<ActionMenu items={[{ label: 'Logs', icon: 'logs', action: () => onContainerLogs(c.id, c.name) }, ...(c.state === 'running' ? [{ label: 'Shell', icon: 'shell' as const, action: () => onShell({ id: c.id, name: c.name }) }] : []), { label: 'Inspect', icon: 'command', action: () => onInspect(c.id, c.name) }, { label: 'Copy docker run', icon: 'command', action: () => onCommand(c.id) }]} /></div></td></tr>)}</tbody></table>}</div>;
   })}</section>;
 }
 
@@ -503,6 +545,95 @@ function NetworksView({ networks, filter, onInspect, onRemove, onPrune }: any) {
     { title: '', render: (n) => <div class="actions"><ActionMenu items={[{ label: 'Inspect', icon: 'command', action: () => onInspect(n.id) }, ...(!n.builtin ? [{ separator: true }, { label: 'Remove', icon: 'remove' as const, danger: true, action: () => onRemove(n.id, n.name) }] : [])]} /></div> },
   ];
   return <section class="view"><div class="view-toolbar"><button class="btn btn-ghost" onClick={onPrune}>Prune unused networks</button></div><DataTable id="networks-table" rows={networks} columns={columns} empty="No networks." filter={filter} rowKey={(n) => n.id} /></section>;
+}
+
+function splitEnv(env: string) {
+  const idx = env.indexOf('=');
+  return idx === -1 ? [env, ''] : [env.slice(0, idx), env.slice(idx + 1)];
+}
+
+function InspectRows({ rows, empty = '—' }: { rows: string[][]; empty?: string }) {
+  if (!rows.length) return <div class="empty compact-empty">{empty}</div>;
+  return (
+    <div class="inspect-rows">
+      {rows.map(([key, value]) => (
+        <div class="inspect-row" key={key}>
+          <div class="inspect-key">{key}</div>
+          <div class="inspect-value">{value || '—'}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContainerInspectorModal({ inspector, onClose }: any) {
+  const [tab, setTab] = useState('overview');
+  const [copied, setCopied] = useState(false);
+  const info = inspector.info || {};
+  const cfg = info.Config || {};
+  const host = info.HostConfig || {};
+  const state = info.State || {};
+  const restart = host.RestartPolicy || {};
+  const name = (info.Name || '').replace(/^\//, '') || inspector.title;
+  const command = [
+    ...(Array.isArray(cfg.Entrypoint) ? cfg.Entrypoint : cfg.Entrypoint ? [cfg.Entrypoint] : []),
+    ...(Array.isArray(cfg.Cmd) ? cfg.Cmd : cfg.Cmd ? [cfg.Cmd] : []),
+  ].join(' ');
+  const tabs = [
+    ['overview', 'Overview'],
+    ['command', 'Command'],
+    ['env', `Env (${(cfg.Env || []).length})`],
+    ['mounts', `Mounts (${(info.Mounts || []).length})`],
+    ['networks', `Networks (${Object.keys(info.NetworkSettings?.Networks || {}).length})`],
+    ['labels', `Labels (${Object.keys(cfg.Labels || {}).length})`],
+  ];
+  const overviewRows = [
+    ['Name', name],
+    ['ID', info.Id || ''],
+    ['Image', cfg.Image || info.Image || ''],
+    ['State', state.Status || ''],
+    ['Started', state.StartedAt || ''],
+    ['Created', info.Created || ''],
+    ['Restart', restart.Name && restart.Name !== 'no' ? `${restart.Name}${restart.MaximumRetryCount ? `:${restart.MaximumRetryCount}` : ''}` : 'no'],
+  ];
+  const commandRows = [
+    ['Path', info.Path || ''],
+    ['Args', Array.isArray(info.Args) ? info.Args.join(' ') : ''],
+    ['Entrypoint', Array.isArray(cfg.Entrypoint) ? cfg.Entrypoint.join(' ') : cfg.Entrypoint || ''],
+    ['Cmd', Array.isArray(cfg.Cmd) ? cfg.Cmd.join(' ') : cfg.Cmd || ''],
+    ['Resolved', command],
+    ['Working Dir', cfg.WorkingDir || ''],
+    ['User', cfg.User || ''],
+  ];
+  const envRows = (cfg.Env || []).map((env: string) => splitEnv(env));
+  const mountRows = (info.Mounts || []).map((m: any) => [m.Destination || m.Target || '', `${m.Source || m.Name || 'anonymous'}${m.RW === false ? ' (ro)' : ''}`]);
+  const networkRows = Object.entries(info.NetworkSettings?.Networks || {}).flatMap(([network, net]: [string, any]) => [
+    [`${network} IP`, net.IPAddress || ''],
+    [`${network} Gateway`, net.Gateway || ''],
+    [`${network} MAC`, net.MacAddress || ''],
+  ]);
+  const labelRows = Object.entries(cfg.Labels || {}).map(([key, value]) => [key, String(value)]);
+
+  return (
+    <Modal
+      title={inspector.title}
+      width={760}
+      onClose={onClose}
+      headerActions={<button class="btn btn-ghost btn-sm" onClick={() => { navigator.clipboard.writeText(JSON.stringify(info, null, 2)); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? 'Copied!' : 'Copy JSON'}</button>}
+    >
+      <div class="inspect-tabs">
+        {tabs.map(([id, label]) => <button class={`inspect-tab ${tab === id ? 'active' : ''}`} key={id} onClick={() => setTab(id)}>{label}</button>)}
+      </div>
+      <div class="inspect-panel">
+        {tab === 'overview' && <InspectRows rows={overviewRows} />}
+        {tab === 'command' && <InspectRows rows={commandRows} />}
+        {tab === 'env' && <InspectRows rows={envRows} empty="No environment variables." />}
+        {tab === 'mounts' && <InspectRows rows={mountRows} empty="No mounts." />}
+        {tab === 'networks' && <InspectRows rows={networkRows} empty="No networks." />}
+        {tab === 'labels' && <InspectRows rows={labelRows} empty="No labels." />}
+      </div>
+    </Modal>
+  );
 }
 
 function CommandModal({ command, onClose }: any) {
