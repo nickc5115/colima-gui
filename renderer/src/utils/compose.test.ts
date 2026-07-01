@@ -3,7 +3,7 @@ import { groupComposeProjects } from './compose';
 import type { ContainerSummary } from '../types';
 
 function c(name: string, project: string | null, service: string | null): ContainerSummary {
-  return { id: name, name, image: 'img', state: 'running', status: 'Up', ports: [], composeProject: project, composeService: service, composeWorkdir: null };
+  return { id: name, name, image: 'img', state: 'running', status: 'Up', ports: [], composeProject: project, composeService: service, composeWorkdir: null, composeConfigFiles: null, composeContainerNumber: null, composeDependsOn: null };
 }
 
 describe('groupComposeProjects', () => {

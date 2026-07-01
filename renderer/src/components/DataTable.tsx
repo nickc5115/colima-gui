@@ -56,30 +56,32 @@ export function DataTable<T>({
   if (!filtered.length) return <div class="empty">{empty}</div>;
 
   return (
-    <table class="grid" id={id}>
-      <thead>
-        <tr>
-          {columns.map((col, idx) => (
-            <th
-              key={col.title || idx}
-              class={`${col.type ? 'sortable' : ''}${sort?.idx === idx ? ` sort-${sort.dir}` : ''}`}
-              onClick={() => {
-                if (!col.type) return;
-                setSort((cur) => ({ idx, dir: cur?.idx === idx && cur.dir === 'asc' ? 'desc' : 'asc' }));
-              }}
-            >
-              {col.title}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {filtered.map((row) => (
-          <tr key={rowKey(row)}>
-            {columns.map((col, idx) => <td key={idx} class={col.className}>{col.render(row)}</td>)}
+    <div class="table-wrap">
+      <table class="grid" id={id}>
+        <thead>
+          <tr>
+            {columns.map((col, idx) => (
+              <th
+                key={col.title || idx}
+                class={`${col.type ? 'sortable' : ''}${sort?.idx === idx ? ` sort-${sort.dir}` : ''}`}
+                onClick={() => {
+                  if (!col.type) return;
+                  setSort((cur) => ({ idx, dir: cur?.idx === idx && cur.dir === 'asc' ? 'desc' : 'asc' }));
+                }}
+              >
+                {col.title}
+              </th>
+            ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {filtered.map((row) => (
+            <tr key={rowKey(row)}>
+              {columns.map((col, idx) => <td key={idx} class={col.className}>{col.render(row)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

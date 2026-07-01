@@ -1,6 +1,13 @@
 export type Tab = 'containers' | 'images' | 'volumes' | 'compose' | 'networks';
 export type ThemePref = 'system' | 'dark' | 'light';
 export type ActionName = 'start' | 'stop' | 'restart';
+export type LogHistoryMode = 'live' | 'tail-500' | 'tail-1000' | 'tail-5000' | 'tail-max' | 'since-15m' | 'since-1h';
+
+export interface LogStartOptions {
+  tail?: number;
+  since?: number;
+  follow?: boolean;
+}
 
 export type ApiResult<T = Record<string, never>> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -9,6 +16,7 @@ export interface ColimaProfile {
   status: string;
   cpus?: number;
   memory?: number;
+  disk?: number;
   runtime?: string;
 }
 
@@ -22,6 +30,9 @@ export interface ContainerSummary {
   composeProject: string | null;
   composeService: string | null;
   composeWorkdir: string | null;
+  composeConfigFiles: string | null;
+  composeContainerNumber: string | null;
+  composeDependsOn: string | null;
 }
 
 export interface ImageSummary {
@@ -155,11 +166,11 @@ export interface WindowApi {
     listPrunable: () => Promise<ApiResult<{ networks: Array<{ id: string; name: string; driver: string }> }>>;
   };
   logs: {
-    start: (id: string) => Promise<ApiResult>;
+    start: (id: string, options?: LogStartOptions) => Promise<ApiResult>;
     stop: () => Promise<ApiResult>;
     onData: (cb: (payload: LogData) => void) => () => void;
     onEnd: (cb: (payload: LogEnd) => void) => () => void;
-    startCompose: (services: ComposeServiceRef[]) => Promise<ApiResult>;
+    startCompose: (services: ComposeServiceRef[], options?: LogStartOptions) => Promise<ApiResult>;
     stopCompose: () => Promise<ApiResult>;
     onComposeData: (cb: (payload: ComposeLogData) => void) => () => void;
     onComposeEnd: (cb: (payload: ComposeLogEnd) => void) => () => void;

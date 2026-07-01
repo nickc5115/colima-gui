@@ -66,7 +66,7 @@ contextBridge.exposeInMainWorld('api', {
     listPrunable: () => ipcRenderer.invoke('network:listPrunable'),
   },
   logs: {
-    start: (id) => ipcRenderer.invoke('logs:start', id),
+    start: (id, options) => ipcRenderer.invoke('logs:start', id, options),
     stop: () => ipcRenderer.invoke('logs:stop'),
     onData: (cb) => {
       const handler = (_e, payload) => cb(payload);
@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('logs:end', handler);
       return () => ipcRenderer.removeListener('logs:end', handler);
     },
-    startCompose: (services) => ipcRenderer.invoke('logs:startCompose', services),
+    startCompose: (services, options) => ipcRenderer.invoke('logs:startCompose', services, options),
     stopCompose: () => ipcRenderer.invoke('logs:stopCompose'),
     onComposeData: (cb) => {
       const handler = (_e, payload) => cb(payload);

@@ -173,6 +173,9 @@ ipcMain.handle('docker:containers', async () => {
         composeProject: labels['com.docker.compose.project'] || null,
         composeService: labels['com.docker.compose.service'] || null,
         composeWorkdir: labels['com.docker.compose.project.working_dir'] || null,
+        composeConfigFiles: labels['com.docker.compose.project.config_files'] || null,
+        composeContainerNumber: labels['com.docker.compose.container-number'] || null,
+        composeDependsOn: labels['com.docker.compose.depends_on'] || null,
       };
     });
     return { ok: true, containers };
@@ -427,16 +430,31 @@ let activeLogStream = null;
 
 function stopActiveLogStream() {
   if (activeLogStream) {
+    activeLogStream.removeAllListeners('end');
+    activeLogStream.removeAllListeners('error');
     try { activeLogStream.destroy(); } catch (_) { /* noop */ }
     activeLogStream = null;
   }
 }
 
-ipcMain.handle('logs:start', async (event, id) => {
+function normalizeLogOptions(options, fallbackTail) {
+  const rawTail = Number(options && options.tail);
+  const tail = Number.isFinite(rawTail) ? Math.max(0, Math.floor(rawTail)) : fallbackTail;
+  const rawSince = Number(options && options.since);
+  const since = Number.isFinite(rawSince) && rawSince > 0 ? Math.floor(rawSince) : undefined;
+  return {
+    follow: options && options.follow === false ? false : true,
+    tail,
+    since,
+  };
+}
+
+ipcMain.handle('logs:start', async (event, id, options = {}) => {
   try {
     stopActiveLogStream();
     const { docker } = getDocker();
     const container = docker.getContainer(id);
+    const logOptions = normalizeLogOptions(options, 500);
 
     // TTY containers emit a raw stream; non-TTY containers emit a multiplexed
     // stream that must be demux'd (8-byte frame headers). Inspect to find out.
@@ -444,10 +462,11 @@ ipcMain.handle('logs:start', async (event, id) => {
     const hasTty = info && info.Config && info.Config.Tty;
 
     const logStream = await container.logs({
-      follow: true,
+      follow: logOptions.follow,
       stdout: true,
       stderr: true,
-      tail: 500,
+      tail: logOptions.tail,
+      ...(logOptions.since ? { since: logOptions.since } : {}),
       timestamps: false,
     });
     activeLogStream = logStream;
@@ -497,18 +516,21 @@ let activeComposeStreams = [];
 
 function stopComposeStreams() {
   for (const s of activeComposeStreams) {
+    s.removeAllListeners('end');
+    s.removeAllListeners('error');
     try { s.destroy(); } catch (_) { /* noop */ }
   }
   activeComposeStreams = [];
 }
 
-ipcMain.handle('logs:startCompose', async (event, services) => {
+ipcMain.handle('logs:startCompose', async (event, services, options = {}) => {
   try {
     stopComposeStreams();
     const { docker } = getDocker();
     const send = (channel, payload) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
     };
+    const logOptions = normalizeLogOptions(options, 200);
 
     for (const svc of services || []) {
       try {
@@ -516,7 +538,12 @@ ipcMain.handle('logs:startCompose', async (event, services) => {
         const info = await container.inspect();
         const hasTty = info && info.Config && info.Config.Tty;
         const logStream = await container.logs({
-          follow: true, stdout: true, stderr: true, tail: 200, timestamps: false,
+          follow: logOptions.follow,
+          stdout: true,
+          stderr: true,
+          tail: logOptions.tail,
+          ...(logOptions.since ? { since: logOptions.since } : {}),
+          timestamps: false,
         });
         activeComposeStreams.push(logStream);
 
@@ -531,11 +558,16 @@ ipcMain.handle('logs:startCompose', async (event, services) => {
         }
         // A service's stream ends when its container stops — tell the renderer
         // so it can show the service (and eventually the whole project) as stopped.
-        logStream.on('end', () => send('logs:composeEnd', { service: svc.service }));
-        logStream.on('error', () => send('logs:composeEnd', { service: svc.service }));
+        const sendComposeEnd = (extra) => {
+          container.inspect()
+            .then((i) => send('logs:composeEnd', { service: svc.service, id: svc.id, running: !!(i.State && i.State.Running), ...extra }))
+            .catch(() => send('logs:composeEnd', { service: svc.service, id: svc.id, running: false, ...extra }));
+        };
+        logStream.on('end', () => sendComposeEnd({}));
+        logStream.on('error', (e) => sendComposeEnd({ error: e.message }));
       } catch (e) {
         send('logs:composeData', { service: svc.service, line: `[failed to attach: ${e.message}]\n`, stream: 'stderr' });
-        send('logs:composeEnd', { service: svc.service });
+        send('logs:composeEnd', { service: svc.service, id: svc.id, running: false, error: e.message });
       }
     }
     return { ok: true };

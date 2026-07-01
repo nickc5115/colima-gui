@@ -9,8 +9,24 @@ function termTheme() {
   const v = (n: string) => css.getPropertyValue(n).trim();
   return {
     background: v('--logs-bg') || '#0b0e13',
-    foreground: v('--text') || '#e6edf3',
+    foreground: v('--logs-fg') || v('--text') || '#c9d1d9',
     cursor: v('--blue') || '#388bfd',
+    black: v('--logs-black') || '#151b23',
+    red: v('--logs-red') || '#ff7b72',
+    green: v('--logs-green') || '#7ee787',
+    yellow: v('--logs-yellow') || '#f2cc60',
+    blue: v('--logs-blue') || '#79c0ff',
+    magenta: v('--logs-magenta') || '#d2a8ff',
+    cyan: v('--logs-cyan') || '#76e3ea',
+    white: v('--logs-fg') || '#c9d1d9',
+    brightBlack: v('--logs-muted') || '#6e7681',
+    brightRed: v('--logs-red') || '#ff7b72',
+    brightGreen: v('--logs-green') || '#7ee787',
+    brightYellow: v('--logs-yellow') || '#f2cc60',
+    brightBlue: v('--logs-blue') || '#79c0ff',
+    brightMagenta: v('--logs-magenta') || '#d2a8ff',
+    brightCyan: v('--logs-cyan') || '#76e3ea',
+    brightWhite: v('--logs-bright') || '#f0f6fc',
     selectionBackground: 'rgba(56,139,253,0.3)',
   };
 }
@@ -20,6 +36,13 @@ export function ShellModal({ container, onClose }: { container: { id: string; na
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [shell, setShell] = useState('/bin/sh');
+
+  function applyTerminalTheme() {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = termTheme();
+    try { term.refresh(0, term.rows - 1); } catch { /* noop */ }
+  }
 
   useEffect(() => {
     if (!container || !hostRef.current) return;
@@ -45,7 +68,7 @@ export function ShellModal({ container, onClose }: { container: { id: string; na
 
     async function start() {
       await api.exec.stop();
-      term.options.theme = termTheme();
+      applyTerminalTheme();
       term.reset();
       await new Promise((r) => requestAnimationFrame(r));
       try { fitRef.current?.fit(); } catch { /* noop */ }
@@ -79,6 +102,12 @@ export function ShellModal({ container, onClose }: { container: { id: string; na
       api.exec.stop();
     };
   }, [container?.id, shell]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => applyTerminalTheme());
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   if (!container) return null;
   return (
