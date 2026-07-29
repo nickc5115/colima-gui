@@ -12,6 +12,7 @@
     "test": "vitest run --config renderer/vite.config.ts",
     "dist": "npm run build:renderer && electron-builder",
     "dist:mac": "npm run build:renderer && electron-builder --mac",
+    "dist:mac:release": "npm run dist:mac && node scripts/finalize-mac-dmg.mjs",
     "dist:mac:universal": "npm run build:renderer && electron-builder --mac --universal"
   },
   "author": "",
@@ -29,6 +30,9 @@
       "notarize": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "sign": true
     },
     "forceCodeSigning": true,
     "files": [

@@ -65,10 +65,12 @@ xcrun notarytool store-credentials colima-gui-notary \
   --team-id "<team-id>" \
   --password "<app-specific-password>"
 
-APPLE_KEYCHAIN_PROFILE=colima-gui-notary npm run dist:mac
+APPLE_KEYCHAIN_PROFILE=colima-gui-notary npm run dist:mac:release
 ```
 
-The signed and notarized DMG is written to `dist/`.
+The release build signs and notarizes both the app bundle and the outer DMG,
+staples the DMG ticket, validates it with Gatekeeper, and regenerates the DMG
+blockmap. The finalized DMG is written to `dist/`.
 
 ## Architecture
 
