@@ -45,6 +45,31 @@ When verifying manually, be careful not to open the installed app from
 - `npm test` — run Vitest tests for renderer logic
 - `npm run dist:mac:universal` — build the universal macOS DMG
 
+## Distribution
+
+The macOS package is built with `electron-builder`, hardened runtime, and
+notarization enabled. A local Developer ID Application certificate must be
+available in the keychain:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+For notarization, provide one of the credential sets supported by
+`@electron/notarize`. The keychain profile flow keeps secrets out of the shell
+history:
+
+```bash
+xcrun notarytool store-credentials colima-gui-notary \
+  --apple-id "<apple-id>" \
+  --team-id "<team-id>" \
+  --password "<app-specific-password>"
+
+APPLE_KEYCHAIN_PROFILE=colima-gui-notary npm run dist:mac
+```
+
+The signed and notarized DMG is written to `dist/`.
+
 ## Architecture
 
 - `main.js` — Electron main process, Colima CLI calls, Docker API, IPC handlers
