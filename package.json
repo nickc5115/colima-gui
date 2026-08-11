@@ -1,6 +1,6 @@
 {
   "name": "colima-gui",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "A minimal Docker-Desktop-style GUI for Colima",
   "main": "main.js",
   "scripts": {
@@ -10,10 +10,11 @@
     "build:renderer": "vite build --config renderer/vite.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config renderer/vite.config.ts",
-    "dist": "npm run build:renderer && electron-builder",
-    "dist:mac": "npm run build:renderer && electron-builder --mac",
+    "build:mac-icon": "node scripts/build-mac-icon.mjs",
+    "dist": "npm run build:renderer && npm run build:mac-icon && electron-builder",
+    "dist:mac": "npm run build:renderer && npm run build:mac-icon && electron-builder --mac",
     "dist:mac:release": "npm run dist:mac && node scripts/finalize-mac-dmg.mjs",
-    "dist:mac:universal": "npm run build:renderer && electron-builder --mac --universal"
+    "dist:mac:universal": "npm run build:renderer && npm run build:mac-icon && electron-builder --mac --universal"
   },
   "author": "",
   "license": "MIT",
@@ -23,6 +24,9 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
+      "extendInfo": {
+        "CFBundleIconName": "AppIcon"
+      },
       "target": [
         "dmg"
       ],
@@ -35,6 +39,12 @@
       "sign": true
     },
     "forceCodeSigning": true,
+    "extraResources": [
+      {
+        "from": "build/generated/Assets.car",
+        "to": "Assets.car"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",

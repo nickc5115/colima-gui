@@ -42,6 +42,7 @@ When verifying manually, be careful not to open the installed app from
 ## Scripts
 
 - `npm run build:renderer` — build the Preact/Vite renderer
+- `npm run build:mac-icon` — compile the macOS 26 Icon Composer asset with Xcode
 - `npm test` — run Vitest tests for renderer logic
 - `npm run dist:mac:universal` — build the universal macOS DMG
 
@@ -50,6 +51,10 @@ When verifying manually, be careful not to open the installed app from
 The macOS package is built with `electron-builder`, hardened runtime, and
 notarization enabled. A local Developer ID Application certificate must be
 available in the keychain:
+
+Release builds also require Xcode 26 or newer to compile `assets/AppIcon.icon`
+into the native macOS asset catalog. The existing ICNS remains the fallback for
+older macOS versions.
 
 ```bash
 security find-identity -v -p codesigning

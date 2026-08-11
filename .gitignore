@@ -5,6 +5,7 @@ node_modules/
 dist/
 renderer-dist/
 out/
+build/generated/
 
 # macOS
 .DS_Store
