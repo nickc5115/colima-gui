@@ -104,6 +104,7 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
     const partialRef = useRef('');
     const entriesRef = useRef<LogEntry[]>([]);
     const searchRef = useRef('');
+    const replayVersionRef = useRef(0);
     const levelRef = useRef<LogLevel>('all');
     const endedRef = useRef(false);
     const followRef = useRef(true);
@@ -128,6 +129,7 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
     function setSearch(value: string) {
       searchRef.current = value;
       setSearchState(value);
+      if (value.trim()) setFollowValue(false);
     }
 
     function setLevel(value: LogLevel) {
@@ -189,10 +191,8 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
       return 'info';
     }
 
-    function matchesFilters(entry: LogEntry) {
-      const q = searchRef.current.trim().toLowerCase();
+    function matchesLevelFilter(entry: LogEntry) {
       const selected = levelRef.current;
-      if (q && !entry.text.toLowerCase().includes(q)) return false;
       if (selected !== 'all' && entryLevel(entry) !== selected) return false;
       return true;
     }
@@ -212,14 +212,34 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
       termRef.current?.write(`${renderEntry(entry)}\r\n`);
     }
 
-    function replayEntries(scrollBottom = followRef.current) {
-      if (!termRef.current) return;
-      termRef.current.clear();
-      for (const entry of entriesRef.current) {
-        if (!matchesFilters(entry)) continue;
-        writeEntry(entry);
+    function scrollToFirstSearchMatch(term: Terminal, query: string) {
+      const needle = query.toLowerCase();
+      const buffer = term.buffer.active;
+      for (let line = 0; line < buffer.length; line += 1) {
+        if (!buffer.getLine(line)?.translateToString(true).toLowerCase().includes(needle)) continue;
+        term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 3)));
+        return;
       }
-      if (scrollBottom) termRef.current.scrollToBottom();
+    }
+
+    function replayEntries(scrollBottom = followRef.current, searchQuery = '') {
+      const term = termRef.current;
+      if (!term) return;
+      const replayVersion = ++replayVersionRef.current;
+      const output = entriesRef.current
+        .filter(matchesLevelFilter)
+        .map((entry) => `${renderEntry(entry)}\r\n`)
+        .join('');
+      term.clear();
+
+      const finishReplay = () => {
+        if (replayVersion !== replayVersionRef.current) return;
+        if (searchQuery) scrollToFirstSearchMatch(term, searchQuery);
+        else if (scrollBottom) term.scrollToBottom();
+      };
+
+      if (output) term.write(output, finishReplay);
+      else finishReplay();
     }
 
     function clearLogEntries(resetHistoryMode = true) {
@@ -259,7 +279,7 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
     function pushEntry(entry: LogEntry) {
       entriesRef.current.push(entry);
       if (entriesRef.current.length > maxLinesRef.current) entriesRef.current.splice(0, entriesRef.current.length - maxLinesRef.current);
-      if (matchesFilters(entry)) {
+      if (matchesLevelFilter(entry)) {
         writeEntry(entry);
       }
     }
@@ -295,7 +315,8 @@ export const LogsDrawer = forwardRef<LogsDrawerHandle, { open: boolean; onClose:
     }, [open]);
 
     useEffect(() => {
-      replayEntries();
+      const query = searchRef.current.trim();
+      replayEntries(!query && followRef.current, query);
     }, [search, level]);
 
     useEffect(() => {
