@@ -31,6 +31,14 @@ import { ShellModal } from './components/ShellModal';
 const ACTION_VERB: Record<ActionName, string> = { start: 'starting…', stop: 'stopping…', restart: 'restarting…' };
 const DEFAULT_LOG_HISTORY: LogStartOptions = { tail: 500, follow: true };
 
+interface CleanupPreview {
+  stoppedContainers: ContainerSummary[];
+  danglingImages: Array<{ id: string; size: number; created: number }>;
+  unusedVolumes: Array<{ name: string; driver: string }>;
+  unusedNetworks: Array<{ id: string; name: string; driver: string }>;
+  buildCache: { count: number; active: number; size: number; reclaimable: number };
+}
+
 function systemTheme(): 'dark' | 'light' {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
@@ -174,6 +182,8 @@ export function App() {
   const [images, setImages] = useState<ImageSummary[]>([]);
   const [volumes, setVolumes] = useState<VolumeSummary[]>([]);
   const [networks, setNetworks] = useState<NetworkSummary[]>([]);
+  const [cleanup, setCleanup] = useState<CleanupPreview | null>(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
   const [stats, setStats] = useState<Record<string, StatsSnapshot>>({});
   const [pending, setPending] = useState<Map<string, string>>(new Map());
   const [toast, setToast] = useState<{ message: string; kind: 'error' | 'success' } | null>(null);
@@ -226,6 +236,7 @@ export function App() {
     setImages([]);
     setVolumes([]);
     setNetworks([]);
+    setCleanup(null);
     setStats({});
     statsTimers.current.forEach((t) => clearInterval(t));
     statsTimers.current = [];
@@ -264,6 +275,32 @@ export function App() {
       const res = await api.network.list();
       if (!res.ok) { showError(res.error); return; }
       setNetworks(res.networks);
+    } else if (tab === 'cleanup') {
+      const containersRes = await api.docker.containers();
+      if (!containersRes.ok) { showError(containersRes.error); return; }
+      const [imagesRes, volumesRes, networksRes, buildCacheRes] = await Promise.all([
+        api.image.listDangling(),
+        api.volume.listPrunable(),
+        api.network.listPrunable(),
+        api.buildCache.usage(),
+      ]);
+      if (!imagesRes.ok) { showError(imagesRes.error); return; }
+      if (!volumesRes.ok) { showError(volumesRes.error); return; }
+      if (!networksRes.ok) { showError(networksRes.error); return; }
+      if (!buildCacheRes.ok) { showError(buildCacheRes.error); return; }
+      setContainers(containersRes.containers);
+      setCleanup({
+        stoppedContainers: containersRes.containers.filter((c) => c.state !== 'running'),
+        danglingImages: imagesRes.images,
+        unusedVolumes: volumesRes.volumes,
+        unusedNetworks: networksRes.networks,
+        buildCache: {
+          count: buildCacheRes.count,
+          active: buildCacheRes.active,
+          size: buildCacheRes.size,
+          reclaimable: buildCacheRes.reclaimable,
+        },
+      });
     }
   }, [clearData, refreshColima, refreshStats, showError, tab]);
   refreshFn.current = refreshActive;
@@ -517,6 +554,83 @@ export function App() {
   const imageRows = images.flatMap((img) => img.tags.map((tag) => ({ ...img, tag })));
   const composeProjects = useMemo(() => groupComposeProjects(containers), [containers]);
   const selectedProfile = profiles.find((p) => p.name === profile) || profiles[0];
+  const cleanupItemCount = cleanup
+    ? cleanup.stoppedContainers.length + cleanup.danglingImages.length + cleanup.unusedVolumes.length + cleanup.unusedNetworks.length + (cleanup.buildCache.reclaimable > 0 ? Math.max(0, cleanup.buildCache.count - cleanup.buildCache.active) : 0)
+    : 0;
+  const confirmCleanup = () => {
+    if (!cleanup) return;
+    const unusedBuildCacheCount = cleanup.buildCache.reclaimable > 0 ? Math.max(0, cleanup.buildCache.count - cleanup.buildCache.active) : 0;
+    const removableCount = cleanup.stoppedContainers.length + cleanup.danglingImages.length + cleanup.unusedVolumes.length + cleanup.unusedNetworks.length + unusedBuildCacheCount;
+    const rows = [
+      ...cleanup.stoppedContainers.map((c) => ['Stopped container', c.name, c.status || c.id.slice(0, 12)]),
+      ...cleanup.danglingImages.map((i) => ['Dangling image', i.id, humanSize(i.size)]),
+      ...cleanup.unusedVolumes.map((v) => ['Unused volume', v.name, v.driver]),
+      ...cleanup.unusedNetworks.map((n) => ['Unused network', n.name, n.driver]),
+      ...(unusedBuildCacheCount > 0 ? [['Build cache', `${unusedBuildCacheCount} unused record(s)`, humanSize(cleanup.buildCache.reclaimable)]] : []),
+    ];
+    const knownReclaimable = cleanup.danglingImages.reduce((sum, img) => sum + (img.size || 0), 0) + cleanup.buildCache.reclaimable;
+    setPrune({
+      title: 'Clean up unused stuff',
+      summary: removableCount
+        ? `${removableCount} item(s) will be removed. Running containers, tagged images, in-use volumes, and active build cache are kept.`
+        : 'Nothing unused was found.',
+      rows,
+      total: knownReclaimable ? `Known space ${humanSize(knownReclaimable)}` : '',
+      confirm: `Remove ${removableCount} item(s)`,
+      onConfirm: async () => {
+        if (!cleanup) return;
+        setCleanupBusy(true);
+        const failures: string[] = [];
+        let removedContainers = 0;
+        let removedImages = 0;
+        let removedVolumes = 0;
+        let removedNetworks = 0;
+        let removedBuildCache = 0;
+        let reclaimed = 0;
+        try {
+          for (const container of cleanup.stoppedContainers) {
+            const res = await api.container.remove(container.id, true);
+            if (res.ok) removedContainers += 1;
+            else failures.push(`Container ${container.name}: ${res.error}`);
+          }
+          if (cleanup.danglingImages.length) {
+            const res = await api.image.prune();
+            if (res.ok) {
+              removedImages = res.deleted || 0;
+              reclaimed += res.reclaimed || 0;
+            } else failures.push(`Images: ${res.error}`);
+          }
+          if (cleanup.unusedVolumes.length) {
+            const res = await api.volume.prune();
+            if (res.ok) {
+              removedVolumes = res.count || 0;
+              reclaimed += res.reclaimed || 0;
+            } else failures.push(`Volumes: ${res.error}`);
+          }
+          if (cleanup.unusedNetworks.length) {
+            const res = await api.network.prune();
+            if (res.ok) removedNetworks = res.count || 0;
+            else failures.push(`Networks: ${res.error}`);
+          }
+          if (cleanup.buildCache.reclaimable > 0) {
+            const res = await api.buildCache.prune();
+            if (res.ok) {
+              removedBuildCache = res.count || 0;
+              reclaimed += res.reclaimed || 0;
+            } else failures.push(`Build cache: ${res.error}`);
+          }
+        } finally {
+          setCleanupBusy(false);
+          await requestRefresh();
+        }
+        if (failures.length) {
+          showAlert(failures.join('\n'), 'Cleanup finished with issues');
+          return;
+        }
+        flashSuccess(`Removed ${removedContainers} container(s), ${removedImages} image(s), ${removedVolumes} volume(s), ${removedNetworks} network(s), ${removedBuildCache} build cache item(s) - reclaimed ${humanSize(reclaimed)}`);
+      },
+    });
+  };
 
   return (
     <div id="app" class={sidebarExpanded ? 'sidebar-expanded' : ''}>
@@ -551,6 +665,7 @@ export function App() {
         }} />}
         {tab === 'compose' && <ComposeView projects={composeProjects} collapsed={composeCollapsed} pending={pending} filter={filter} onToggle={(p: string) => setComposeCollapsed((old) => { const next = new Set(old); next.has(p) ? next.delete(p) : next.add(p); localStorage.setItem('compose-collapsed', JSON.stringify([...next])); return next; })} onLogs={openComposeLogs} onSvcAction={(a: ActionName, id: string) => containerAction(a, id, true)} onBulk={async (services: ContainerSummary[], action: ActionName) => { const targets = services.filter((s: ContainerSummary) => action === 'start' ? s.state !== 'running' : action === 'stop' ? s.state === 'running' : true); await Promise.all(targets.map((s: ContainerSummary) => containerAction(action, s.id, true))); }} onShell={setShell} onCommand={showRunCommand} onInspect={showInspector} onContainerLogs={openLogs} onOpenPort={openPort} />}
         {tab === 'networks' && <NetworksView networks={networks} filter={filter} onInspect={async (id: string) => { const res = await api.network.inspect(id); if (!res.ok) showError(res.error); else setCommand({ title: `Network - ${res.info.Name}`, text: JSON.stringify(res.info, null, 2) }); }} onRemove={async (id: string, name: string) => { if (!confirm(`Remove network "${name}"?`)) return; const res = await api.network.remove(id); if (!res.ok) { showAlert(res.error, 'Could not remove network'); return; } requestRefresh(); }} onPrune={async () => { const res = await api.network.listPrunable(); if (!res.ok) { showError(res.error); return; } setPrune({ title: 'Prune unused networks', summary: res.networks.length ? `${res.networks.length} unused network(s) will be removed.` : 'No unused networks to remove.', rows: res.networks.map((n) => [n.name, n.driver]), confirm: `Remove ${res.networks.length} network(s)`, onConfirm: async () => { const r = await api.network.prune(); if (!r.ok) { showError(r.error); return; } flashSuccess(`Pruned ${r.count} network(s)`); requestRefresh(); } }); }} />}
+        {tab === 'cleanup' && <CleanupView cleanup={cleanup} filter={filter} busy={cleanupBusy} itemCount={cleanupItemCount} onRefresh={requestRefresh} onCleanup={confirmCleanup} />}
       </main>
       <EngineStatusBar
         profile={selectedProfile}
@@ -665,6 +780,116 @@ function NetworksView({ networks, filter, onInspect, onRemove, onPrune }: any) {
     { title: '', render: (n) => <div class="actions"><ActionMenu items={[{ label: 'Inspect', icon: 'command', action: () => onInspect(n.id) }, ...(!n.builtin ? [{ separator: true }, { label: 'Remove', icon: 'remove' as const, danger: true, action: () => onRemove(n.id, n.name) }] : [])]} /></div> },
   ];
   return <section class="view"><div class="view-toolbar"><button class="btn btn-ghost" onClick={onPrune}>Prune unused networks</button></div><DataTable id="networks-table" rows={networks} columns={columns} empty="No networks." filter={filter} rowKey={(n) => n.id} /></section>;
+}
+
+function CleanupView({
+  cleanup,
+  filter,
+  busy,
+  itemCount,
+  onRefresh,
+  onCleanup,
+}: {
+  cleanup: CleanupPreview | null;
+  filter: string;
+  busy: boolean;
+  itemCount: number;
+  onRefresh: () => void;
+  onCleanup: () => void;
+}) {
+  if (!cleanup) return <section class="view"><div class="empty">Calculating cleanup targets…</div></section>;
+  const query = filter.trim().toLowerCase();
+  const knownReclaimable = cleanup.danglingImages.reduce((sum, img) => sum + (img.size || 0), 0) + cleanup.buildCache.reclaimable;
+  const groups = [
+    {
+      title: 'Stopped Containers',
+      count: cleanup.stoppedContainers.length,
+      rows: cleanup.stoppedContainers.map((c) => ({
+        key: c.id,
+        cells: [c.name, c.image, c.status || c.state],
+      })),
+      empty: 'No stopped containers.',
+    },
+    {
+      title: 'Dangling Images',
+      count: cleanup.danglingImages.length,
+      rows: cleanup.danglingImages.map((i) => ({
+        key: i.id,
+        cells: [i.id, '<none>', humanSize(i.size)],
+      })),
+      empty: 'No dangling images.',
+    },
+    {
+      title: 'Unused Volumes',
+      count: cleanup.unusedVolumes.length,
+      rows: cleanup.unusedVolumes.map((v) => ({
+        key: v.name,
+        cells: [v.name, v.driver, 'unused'],
+      })),
+      empty: 'No unused volumes.',
+    },
+    {
+      title: 'Build Cache',
+      count: cleanup.buildCache.count,
+      rows: cleanup.buildCache.count ? [{
+        key: 'build-cache',
+        cells: [
+          `${Math.max(0, cleanup.buildCache.count - cleanup.buildCache.active)} unused record(s)`,
+          `${cleanup.buildCache.active} active`,
+          cleanup.buildCache.reclaimable ? humanSize(cleanup.buildCache.reclaimable) : '—',
+        ],
+      }] : [],
+      empty: 'No build cache.',
+    },
+    {
+      title: 'Unused Networks',
+      count: cleanup.unusedNetworks.length,
+      rows: cleanup.unusedNetworks.map((n) => ({
+        key: n.id,
+        cells: [n.name, n.driver, 'unused'],
+      })),
+      empty: 'No unused networks.',
+    },
+  ];
+
+  return (
+    <section class="view cleanup-view">
+      <div class="cleanup-summary">
+        <div class="cleanup-stat"><span>Items</span><strong>{itemCount}</strong></div>
+        <div class="cleanup-stat"><span>Reclaimable</span><strong>{knownReclaimable ? humanSize(knownReclaimable) : '—'}</strong></div>
+        <div class="cleanup-stat"><span>Containers</span><strong>{cleanup.stoppedContainers.length}</strong></div>
+        <div class="cleanup-stat"><span>Build Cache</span><strong>{cleanup.buildCache.reclaimable ? humanSize(cleanup.buildCache.reclaimable) : '—'}</strong></div>
+      </div>
+      <div class="view-toolbar cleanup-toolbar">
+        <button class="btn btn-ghost" onClick={onRefresh} disabled={busy}>Refresh</button>
+        <button class="btn btn-red" onClick={onCleanup} disabled={busy || itemCount === 0}>{busy ? 'Cleaning…' : 'Clean up unused stuff'}</button>
+      </div>
+      <div class="cleanup-groups">
+        {groups.map((group) => {
+          const rows = query
+            ? group.rows.filter((row) => row.cells.join(' ').toLowerCase().includes(query))
+            : group.rows;
+          return (
+            <div class="cleanup-group" key={group.title}>
+              <div class="cleanup-group-header">
+                <span>{group.title}</span>
+                <strong>{group.count}</strong>
+              </div>
+              {rows.length ? (
+                <div class="cleanup-rows">
+                  {rows.map((row) => (
+                    <div class="cleanup-row" key={row.key}>
+                      {row.cells.map((cell) => <span>{cell}</span>)}
+                    </div>
+                  ))}
+                </div>
+              ) : <div class="empty compact-empty">{query ? 'No matches.' : group.empty}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function splitEnv(env: string) {

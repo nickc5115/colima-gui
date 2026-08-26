@@ -294,6 +294,44 @@ ipcMain.handle('image:prune', async () => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Build cache can be much larger than dangling images, but it is reported via
+// Docker's system df endpoint rather than the image list.
+ipcMain.handle('buildCache:usage', async () => {
+  try {
+    const { docker, socketPath } = getDocker();
+    if (!fs.existsSync(socketPath)) {
+      return { ok: false, error: `Docker socket not found at ${socketPath}. Is Colima running?` };
+    }
+    const usage = await docker.df();
+    const cache = usage.BuildCache || [];
+    const size = cache.reduce((sum, item) => sum + (Number(item.Size) || 0), 0);
+    const reclaimable = cache.reduce((sum, item) => sum + (item.InUse ? 0 : (Number(item.Size) || 0)), 0);
+    const active = cache.filter((item) => item.InUse).length;
+    return { ok: true, count: cache.length, active, size, reclaimable };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('buildCache:prune', async () => {
+  try {
+    const { docker } = getDocker();
+    const result = await new Promise((resolve, reject) => {
+      docker.modem.dial({
+        path: '/build/prune?all=true',
+        method: 'POST',
+        statusCodes: {
+          200: true,
+          500: 'server error',
+        },
+      }, (err, data) => err ? reject(err) : resolve(data || {}));
+    });
+    return {
+      ok: true,
+      reclaimed: result.SpaceReclaimed || 0,
+      count: (result.CachesDeleted || []).length,
+    };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // ---------------------------------------------------------------------------
 // IPC: container inspect
 // ---------------------------------------------------------------------------

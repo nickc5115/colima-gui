@@ -1,4 +1,4 @@
-export type Tab = 'containers' | 'images' | 'volumes' | 'compose' | 'networks';
+export type Tab = 'containers' | 'images' | 'volumes' | 'compose' | 'networks' | 'cleanup';
 export type ThemePref = 'system' | 'dark' | 'light';
 export type ActionName = 'start' | 'stop' | 'restart';
 export type LogHistoryMode = 'live' | 'tail-500' | 'tail-1000' | 'tail-5000' | 'tail-max' | 'since-15m' | 'since-1h';
@@ -150,6 +150,10 @@ export interface WindowApi {
     remove: (id: string, force: boolean) => Promise<ApiResult>;
     prune: () => Promise<ApiResult<{ reclaimed: number; deleted: number }>>;
     listDangling: () => Promise<ApiResult<{ images: Array<{ id: string; size: number; created: number }> }>>;
+  };
+  buildCache: {
+    usage: () => Promise<ApiResult<{ count: number; active: number; size: number; reclaimable: number }>>;
+    prune: () => Promise<ApiResult<{ reclaimed: number; count: number }>>;
   };
   volume: {
     list: () => Promise<ApiResult<{ volumes: VolumeSummary[] }>>;

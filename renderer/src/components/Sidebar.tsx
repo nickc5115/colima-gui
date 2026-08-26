@@ -8,6 +8,7 @@ const tabs: Array<{ tab: Tab; label: string; icon: keyof typeof Icons }> = [
   { tab: 'volumes', label: 'Volumes', icon: 'volumes' },
   { tab: 'compose', label: 'Compose', icon: 'compose' },
   { tab: 'networks', label: 'Networks', icon: 'networks' },
+  { tab: 'cleanup', label: 'Cleanup', icon: 'cleanup' },
 ];
 
 export function Sidebar({

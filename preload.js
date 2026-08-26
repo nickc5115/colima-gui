@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld('api', {
     prune: () => ipcRenderer.invoke('image:prune'),
     listDangling: () => ipcRenderer.invoke('image:listDangling'),
   },
+  buildCache: {
+    usage: () => ipcRenderer.invoke('buildCache:usage'),
+    prune: () => ipcRenderer.invoke('buildCache:prune'),
+  },
   volume: {
     list: () => ipcRenderer.invoke('docker:volumes'),
     inspect: (name) => ipcRenderer.invoke('volume:inspect', name),

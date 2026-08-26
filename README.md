@@ -14,7 +14,8 @@ lifecycle and uses `dockerode` against that socket for Docker resources.
 - Live container and combined Compose logs with xterm.js rendering
 - Interactive container shell with xterm.js
 - CPU/memory stats, sortable/filterable tables, and resizable columns
-- Prune previews for dangling images, unused volumes, and unused networks
+- Cleanup previews for stopped containers, dangling images, unused volumes,
+  unused networks, and Docker build cache
 - Inspect volumes/networks and copy an approximate `docker run` command
 - Edit Colima config with simple/advanced views
 
